@@ -256,23 +256,52 @@ async function handleRequest(req, res) {
   res.setHeader('Access-Control-Allow-Headers', '*');
   if (method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
-  // ── DASHBOARD
+  // // ── DASHBOARD
+  // if (method === 'GET' && (pathname === '/' || pathname === '/dashboard')) {
+  //   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  //   try {
+  //     const dashUser = getSessionUser(req);
+  //     if (AUTH_ENABLED && !dashUser) { res.writeHead(302, { Location: '/login' }); res.end(); return; }
+  //     const html = getDashboardHTML(PORT, getBaseUrl(req), dashUser);
+  //     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  //     res.end(html);
+  //   } catch(e) {
+  //     console.error('[dashboard] Error:', e.message, e.stack);
+  //     res.writeHead(500, { 'Content-Type': 'text/plain' });
+  //     res.end('Dashboard error: ' + e.message);
+  //   }
+  //   return;
+  // }
+
+// ── DASHBOARD
   if (method === 'GET' && (pathname === '/' || pathname === '/dashboard')) {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     try {
       const dashUser = getSessionUser(req);
-      if (AUTH_ENABLED && !dashUser) { res.writeHead(302, { Location: '/login' }); res.end(); return; }
+
+      // 1. Verificação de Autenticação (Redirecionamento)
+      if (AUTH_ENABLED && !dashUser) { 
+        res.writeHead(302, { Location: '/login' }); 
+        return res.end(); // O return aqui é essencial
+      }
+
+      // 2. Sucesso (HTML do Dashboard)
       const html = getDashboardHTML(PORT, getBaseUrl(req), dashUser);
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(html);
+
     } catch(e) {
+      // 3. Erro (Falha interna)
       console.error('[dashboard] Error:', e.message, e.stack);
-      res.writeHead(500, { 'Content-Type': 'text/plain' });
-      res.end('Dashboard error: ' + e.message);
+      
+      // Importante: verificar se o cabeçalho já foi enviado antes de tentar enviar o 500
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('Dashboard error: ' + e.message);
+      }
     }
     return;
   }
-
+  
   // ── HEALTH CHECK
   if (method === 'GET' && pathname === '/health') {
     return json(res, { ok: true, version: '2.0.0', uptime: Math.floor(process.uptime()), ts: new Date().toISOString() });
