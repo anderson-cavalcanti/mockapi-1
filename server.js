@@ -259,9 +259,18 @@ async function handleRequest(req, res) {
   // ── DASHBOARD
   if (method === 'GET' && (pathname === '/' || pathname === '/dashboard')) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    const dashUser = getSessionUser(req);
-    if (AUTH_ENABLED && !dashUser) { res.writeHead(302, { Location: '/login' }); res.end(); return; }
-    res.end(getDashboardHTML(PORT, getBaseUrl(req), dashUser)); return;
+    try {
+      const dashUser = getSessionUser(req);
+      if (AUTH_ENABLED && !dashUser) { res.writeHead(302, { Location: '/login' }); res.end(); return; }
+      const html = getDashboardHTML(PORT, getBaseUrl(req), dashUser);
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+    } catch(e) {
+      console.error('[dashboard] Error:', e.message, e.stack);
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      res.end('Dashboard error: ' + e.message);
+    }
+    return;
   }
 
   // ── HEALTH CHECK
@@ -271,10 +280,18 @@ async function handleRequest(req, res) {
 
   // ── AUTH: Login page
   if (method === 'GET' && pathname === '/login') {
-    const user = getSessionUser(req);
-    if (user) { res.writeHead(302, { Location: '/' }); res.end(); return; }
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(getLoginHTML(getBaseUrl(req))); return;
+    try {
+      const user = getSessionUser(req);
+      if (user) { res.writeHead(302, { Location: '/' }); res.end(); return; }
+      const html = getLoginHTML(getBaseUrl(req));
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+    } catch(e) {
+      console.error('[login] Error rendering login page:', e.message, e.stack);
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      res.end('Login page error: ' + e.message);
+    }
+    return;
   }
 
   // ── AUTH: GitHub OAuth start
