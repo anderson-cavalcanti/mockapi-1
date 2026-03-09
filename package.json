@@ -1,5 +1,16 @@
 {
+  "name": "mockapi-inspector",
+  "version": "2.0.0",
+  "description": "MockAPI Inspector - Mock server with CRUD, Faker, OpenAPI, Auth",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "build": "npm install"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "dependencies": {
-    "better-sqlite3": "^12.6.2"
+    "better-sqlite3": "^9.4.3"
   }
 }
