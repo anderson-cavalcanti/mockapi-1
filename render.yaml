@@ -1,0 +1,19 @@
+# render.yaml — Infrastructure as Code para o Render
+# Coloca esse arquivo na raiz do repositório
+
+services:
+  - type: web
+    name: mockapi-inspector
+    runtime: node
+    plan: free          # troca para "starter" ($7/mês) quando quiser disco persistente
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: DB_FILE
+        value: /data/mockapi.db   # aponta pro disco persistente
+    disk:
+      name: mockapi-data
+      mountPath: /data
+      sizeGB: 1          # 1GB é suficiente pra começar (só disponível em planos pagos)
