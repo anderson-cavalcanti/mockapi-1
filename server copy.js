@@ -10,14 +10,7 @@ const url    = require('url');
 const fs     = require('fs');
 const path   = require('path');
 
-const PORT = parseInt(process.env.PORT) || parseInt(process.argv[2]) || 3000;
-
-// Detecta a URL base real (funciona em localhost, Render, Railway, etc.)
-function getBaseUrl(req) {
-  const proto = req.headers['x-forwarded-proto'] || 'http';
-  const host  = req.headers['x-forwarded-host'] || req.headers.host || ('localhost:' + PORT);
-  return proto + '://' + host;
-}
+const PORT = parseInt(process.argv[2]) || 3000;
 
 // Suppress experimental warning for node:sqlite
 const origEmit = process.emit;
@@ -212,12 +205,7 @@ async function handleRequest(req, res) {
   // ── DASHBOARD
   if (method === 'GET' && (pathname === '/' || pathname === '/dashboard')) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(getDashboardHTML(PORT, getBaseUrl(req))); return;
-  }
-
-  // ── HEALTH CHECK
-  if (method === 'GET' && pathname === '/health') {
-    return json(res, { ok: true, version: '2.0.0', uptime: Math.floor(process.uptime()), ts: new Date().toISOString() });
+    res.end(getDashboardHTML(PORT)); return;
   }
 
   // ── ENDPOINTS
@@ -538,8 +526,7 @@ server.listen(PORT, () => {
   console.log(`  ╚${line}╝\n`);
 });
 
-function getDashboardHTML(port, baseUrl) {
-  baseUrl = baseUrl || 'http://localhost:' + port;
+function getDashboardHTML(port) {
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -1116,7 +1103,6 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 
 <script>
 // ── STATE ────────────────────────────────────────────────────────────────────
-const baseUrl = '${baseUrl}';  // injected by server — works on localhost and production
 const state = {
   endpoints: {},
   requests: {},      // endpointId -> []
@@ -1144,8 +1130,7 @@ const METHOD_COLORS = {GET:'#00C8FF',POST:'#00FF87',PUT:'#FFD700',PATCH:'#FF8C42
 
 // ── WEBSOCKET ────────────────────────────────────────────────────────────────
 function connectWS() {
-  const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = wsProto + '//' + location.host + '/ws';
+  const wsUrl = 'ws://' + location.host + '/ws';
   setWsStatus('connecting');
   let ws;
   try {
@@ -1371,7 +1356,7 @@ async function selectEndpoint(id) {
   // Show URL tester
   const ep = state.endpoints[id];
   document.getElementById('url-tester').style.display = 'block';
-  document.getElementById('tester-base').textContent = '${baseUrl}/mock/' + id;
+  document.getElementById('tester-base').textContent = 'http://localhost:${port}/mock/' + id;
   document.getElementById('tester-path').value = '';
   updateTesterUrl();
 }
@@ -1392,7 +1377,7 @@ function updateHeader() {
   if (!ep) return;
   document.getElementById('hdr-name').textContent = ep.name;
   document.getElementById('hdr-id').textContent = ep.id;
-  document.getElementById('hdr-url').textContent = '${baseUrl}/mock/' + ep.id;
+  document.getElementById('hdr-url').textContent = 'http://localhost:${port}/mock/' + ep.id;
   const corsEl = document.getElementById('hdr-cors');
   corsEl.style.display = ep.corsEnabled ? 'inline-block' : 'none';
   // Update delay button
@@ -1414,7 +1399,7 @@ function updateHeaderStats() {
 }
 
 function copyHeaderUrl() {
-  const url = '${baseUrl}/mock/' + state.selectedEp;
+  const url = 'http://localhost:${port}/mock/' + state.selectedEp;
   navigator.clipboard.writeText(url).catch(() => {});
   toast('URL copiada!', 'success');
 }
@@ -1442,7 +1427,7 @@ function renderFeed() {
   const reqs = (state.requests[state.selectedEp] || []);
   const ep = state.endpoints[state.selectedEp];
   if (reqs.length === 0) {
-    const hint = ep ? \`${baseUrl}/mock/\${ep.id}/\\n...adicione qualquer caminho\` : '';
+    const hint = ep ? \`http://localhost:${port}/mock/\${ep.id}/\\n...adicione qualquer caminho\` : '';
     feed.innerHTML = \`<div class="empty-state" id="feed-empty">
       <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
       <div style="font-size:14px">Aguardando requisições...</div>
@@ -1661,7 +1646,7 @@ function updateCrudPreview() {
   const ep = state.selectedEp;
   const rawPath = document.getElementById('crud-path').value.trim();
   const path = rawPath.startsWith('/') ? rawPath : '/' + rawPath;
-  const preview = \`${baseUrl}/mock/\${ep}\${path}\`;
+  const preview = \`http://localhost:${port}/mock/\${ep}\${path}\`;
   document.getElementById('crud-path-preview').textContent = preview;
   const MC = {GET:'#00C8FF',POST:'#00FF87',PUT:'#FFD700',PATCH:'#FF8C42',DELETE:'#FF4444'};
   const routes = [
@@ -1781,7 +1766,7 @@ function renderCrudTables() {
   window._crudCurls = {};
 
   list.innerHTML = tables.map((t, idx) => {
-    const base = \`${baseUrl}/mock/\${ep}\${t.path}\`;
+    const base = \`http://localhost:${port}/mock/\${ep}\${t.path}\`;
     const idField = t.idField || 'id';
     window._crudCurls[idx] = {
       get:    \`curl "\${base}"\`,
@@ -1914,7 +1899,7 @@ async function deleteRowFromTable(rowId, idField) {
   const key = state.activeCrudKey;
   const tbl = state.crudTables[key];
   if (!tbl) return;
-  await fetch(\`${baseUrl}/mock/\${state.selectedEp}\${tbl.path}/\${rowId}\`, { method: 'DELETE' });
+  await fetch(\`http://localhost:${port}/mock/\${state.selectedEp}\${tbl.path}/\${rowId}\`, { method: 'DELETE' });
   const rows = await api('GET', '/api/crud/' + state.selectedEp + '/' + encodeURIComponent(key) + '/rows');
   renderCrudDataTable(rows, idField);
   toast('Registro removido.', 'info');
@@ -1931,7 +1916,7 @@ async function insertRow() {
   if (!tbl) return;
   let body = {};
   try { body = JSON.parse(document.getElementById('add-row-body').value); } catch(_) { toast('JSON inválido.', 'error'); return; }
-  await fetch(\`${baseUrl}/mock/\${state.selectedEp}\${tbl.path}\`, {
+  await fetch(\`http://localhost:${port}/mock/\${state.selectedEp}\${tbl.path}\`, {
     method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
   });
   document.getElementById('add-row-modal').style.display = 'none';
@@ -1953,7 +1938,7 @@ function switchInspTab(tab) {
 
 // ── URL TESTER ────────────────────────────────────────────────────────────────
 function updateTesterUrl() {
-  const base = '${baseUrl}/mock/' + state.selectedEp;
+  const base = 'http://localhost:${port}/mock/' + state.selectedEp;
   const extra = document.getElementById('tester-path').value;
   const full = base + (extra.startsWith('/') ? extra : (extra ? '/' + extra : ''));
   document.getElementById('tester-full-url').textContent = full;
