@@ -271,7 +271,6 @@ module.exports = {
       chart:          db.prepare(`SELECT date(ts) as day,COUNT(*) as n FROM requests WHERE ts>=datetime('now','-29 days') GROUP BY day ORDER BY day`).all(),
       topEndpoints:   db.prepare(`SELECT e.id,e.name,e.req_count,u.login as owner FROM endpoints e LEFT JOIN users u ON e.user_id=u.id ORDER BY e.req_count DESC LIMIT 10`).all(),
       usersByPlan:    db.prepare(`SELECT plan,COUNT(*) as n FROM users GROUP BY plan`).all(),
-      totalRules:     db.prepare(`SELECT COUNT(*) as n FROM rules`).get()?.n||0,
     };
   },
 
