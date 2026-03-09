@@ -1,0 +1,11 @@
+{
+  "name": "mockapi-inspector",
+  "version": "2.0.0",
+  "description": "MockAPI Inspector - SQLite + Faker + OpenAPI",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "start:dev": "node --watch server.js"
+  },
+  "engines": { "node": ">=22.0.0" }
+}
