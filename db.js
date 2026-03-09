@@ -1,29 +1,48 @@
 /**
- * db.js — SQLite persistence layer
- * Usa better-sqlite3 (compatível com Node.js 18, 20, 22+)
- *
- * Instalação: npm install better-sqlite3
+ * db.js — SQLite persistence layer (better-sqlite3)
+ * Supports users, multi-tenancy, admin metrics
  */
 const Database = require('better-sqlite3');
-const path     = require('path');
+const path = require('path');
 
 const DB_FILE = process.env.DB_FILE || path.join(__dirname, 'mockapi.db');
 
 let db;
 try {
   db = new Database(DB_FILE);
+  console.log('[db] SQLite opened:', DB_FILE);
 } catch(e) {
   console.warn('[db] Erro ao abrir arquivo, usando in-memory:', e.message);
   db = new Database(':memory:');
 }
 
-// ── SCHEMA ───────────────────────────────────────────────────────────────────
-db.exec(`
-  PRAGMA journal_mode = WAL;
-  PRAGMA foreign_keys = ON;
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id          TEXT PRIMARY KEY,
+    github_id   TEXT UNIQUE NOT NULL,
+    login       TEXT NOT NULL,
+    name        TEXT,
+    email       TEXT,
+    avatar      TEXT,
+    plan        TEXT DEFAULT 'free',
+    is_admin    INTEGER DEFAULT 0,
+    banned      INTEGER DEFAULT 0,
+    created_at  TEXT DEFAULT (datetime('now')),
+    last_login  TEXT DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS sessions (
+    token       TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    created_at  TEXT DEFAULT (datetime('now')),
+    expires_at  TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
   CREATE TABLE IF NOT EXISTS endpoints (
     id           TEXT PRIMARY KEY,
+    user_id      TEXT,
     name         TEXT NOT NULL,
     path         TEXT,
     cors         INTEGER DEFAULT 1,
@@ -32,7 +51,6 @@ db.exec(`
     req_count    INTEGER DEFAULT 0,
     created_at   TEXT DEFAULT (datetime('now'))
   );
-
   CREATE TABLE IF NOT EXISTS requests (
     id            TEXT PRIMARY KEY,
     endpoint_id   TEXT NOT NULL,
@@ -50,7 +68,6 @@ db.exec(`
     ts            TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (endpoint_id) REFERENCES endpoints(id) ON DELETE CASCADE
   );
-
   CREATE TABLE IF NOT EXISTS rules (
     id          TEXT PRIMARY KEY,
     endpoint_id TEXT NOT NULL,
@@ -62,7 +79,6 @@ db.exec(`
     created_at  TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (endpoint_id) REFERENCES endpoints(id) ON DELETE CASCADE
   );
-
   CREATE TABLE IF NOT EXISTS crud_tables (
     key         TEXT PRIMARY KEY,
     endpoint_id TEXT NOT NULL,
@@ -71,212 +87,192 @@ db.exec(`
     created_at  TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (endpoint_id) REFERENCES endpoints(id) ON DELETE CASCADE
   );
-
   CREATE TABLE IF NOT EXISTS crud_rows (
-    row_id     TEXT NOT NULL,
-    table_key  TEXT NOT NULL,
-    data       TEXT NOT NULL,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now')),
+    row_id      TEXT NOT NULL,
+    table_key   TEXT NOT NULL,
+    data        TEXT NOT NULL,
+    created_at  TEXT DEFAULT (datetime('now')),
+    updated_at  TEXT DEFAULT (datetime('now')),
     PRIMARY KEY (row_id, table_key),
     FOREIGN KEY (table_key) REFERENCES crud_tables(key) ON DELETE CASCADE
   );
+  CREATE INDEX IF NOT EXISTS idx_endpoints_user ON endpoints(user_id);
+  CREATE INDEX IF NOT EXISTS idx_requests_ep    ON requests(endpoint_id);
+  CREATE INDEX IF NOT EXISTS idx_requests_ts    ON requests(ts);
+  CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
 `);
 
-// ── PREPARED STATEMENTS ───────────────────────────────────────────────────────
-const stmts = {
-  // Endpoints
-  epInsert:    db.prepare(`INSERT OR REPLACE INTO endpoints VALUES (?,?,?,?,?,?,?,?)`),
-  epUpdate:    db.prepare(`UPDATE endpoints SET name=?,path=?,cors=?,global_delay=?,rate_limit=? WHERE id=?`),
-  epIncCount:  db.prepare(`UPDATE endpoints SET req_count = req_count + 1 WHERE id=?`),
-  epDelete:    db.prepare(`DELETE FROM endpoints WHERE id=?`),
-  epAll:       db.prepare(`SELECT * FROM endpoints ORDER BY created_at DESC`),
-  epGet:       db.prepare(`SELECT * FROM endpoints WHERE id=?`),
+try { db.exec(`ALTER TABLE endpoints ADD COLUMN user_id TEXT`); } catch(_) {}
 
-  // Requests
-  reqInsert:   db.prepare(`INSERT INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`),
-  reqByEp:     db.prepare(`SELECT * FROM requests WHERE endpoint_id=? ORDER BY ts DESC LIMIT 200`),
-  reqClear:    db.prepare(`DELETE FROM requests WHERE endpoint_id=?`),
-  reqDelOld:   db.prepare(`DELETE FROM requests WHERE id=?`),
+function safeJSON(s) { try { return JSON.parse(s); } catch(_) { return s||null; } }
+function safeStr(v)  { return typeof v==='string'?v:JSON.stringify(v)||null; }
 
-  // Rules
-  ruleInsert:  db.prepare(`INSERT INTO rules VALUES (?,?,?,?,?,?,?,?)`),
-  ruleDelete:  db.prepare(`DELETE FROM rules WHERE id=?`),
-  rulesByEp:   db.prepare(`SELECT * FROM rules WHERE endpoint_id=? ORDER BY created_at DESC`),
-
-  // CRUD tables
-  crudInsert:  db.prepare(`INSERT OR REPLACE INTO crud_tables VALUES (?,?,?,?,?)`),
-  crudDelete:  db.prepare(`DELETE FROM crud_tables WHERE key=?`),
-  crudByEp:    db.prepare(`SELECT * FROM crud_tables WHERE endpoint_id=?`),
-  crudGet:     db.prepare(`SELECT * FROM crud_tables WHERE key=?`),
-  crudAll:     db.prepare(`SELECT * FROM crud_tables`),
-
-  // CRUD rows
-  rowInsert:   db.prepare(`INSERT OR REPLACE INTO crud_rows VALUES (?,?,?,?,?)`),
-  rowUpdate:   db.prepare(`UPDATE crud_rows SET data=?, updated_at=datetime('now') WHERE row_id=? AND table_key=?`),
-  rowDelete:   db.prepare(`DELETE FROM crud_rows WHERE row_id=? AND table_key=?`),
-  rowGet:      db.prepare(`SELECT * FROM crud_rows WHERE row_id=? AND table_key=?`),
-  rowsByTable: db.prepare(`SELECT * FROM crud_rows WHERE table_key=? ORDER BY created_at ASC`),
-  rowCount:    db.prepare(`SELECT COUNT(*) as n FROM crud_rows WHERE table_key=?`),
-  rowsClear:   db.prepare(`DELETE FROM crud_rows WHERE table_key=?`),
-};
-
-// ── HELPERS ───────────────────────────────────────────────────────────────────
-// better-sqlite3 retorna `undefined` quando não encontra registro — normalizamos para null
-function maybe(v) { return v === undefined ? null : v; }
-
+function rowToUser(r) {
+  if (!r) return null;
+  return { id:r.id, githubId:r.github_id, login:r.login, name:r.name,
+           email:r.email, avatar:r.avatar, plan:r.plan,
+           isAdmin:!!r.is_admin, banned:!!r.banned,
+           createdAt:r.created_at, lastLogin:r.last_login };
+}
 function rowToEndpoint(r) {
   if (!r) return null;
-  return {
-    id: r.id, name: r.name, path: r.path,
-    corsEnabled:  r.cors === 1 || r.cors === true,
-    globalDelay:  r.global_delay  || 0,
-    rateLimit:    r.rate_limit    || 100,
-    requestCount: r.req_count     || 0,
-    createdAt:    r.created_at,
-  };
+  return { id:r.id, userId:r.user_id||null, name:r.name, path:r.path,
+           corsEnabled:!!r.cors, globalDelay:r.global_delay||0,
+           rateLimit:r.rate_limit||100, requestCount:r.req_count||0, createdAt:r.created_at };
 }
-
 function rowToRequest(r) {
   if (!r) return null;
-  return {
-    id: r.id, endpointId: r.endpoint_id,
-    method: r.method, path: r.path, fullUrl: r.full_url,
-    status: r.status, latency: r.latency, ip: r.ip,
-    headers:      safeJSON(r.headers),
-    queryParams:  safeJSON(r.query_params),
-    requestBody:  r.request_body,
-    responseBody: r.response_body,
-    matchedRule:  r.matched_rule,
-    timestamp:    r.ts,
-  };
+  return { id:r.id, endpointId:r.endpoint_id, method:r.method, path:r.path,
+           fullUrl:r.full_url, status:r.status, latency:r.latency, ip:r.ip,
+           headers:safeJSON(r.headers), queryParams:safeJSON(r.query_params),
+           requestBody:r.request_body, responseBody:r.response_body,
+           matchedRule:r.matched_rule, timestamp:r.ts };
 }
-
 function rowToRule(r) {
   if (!r) return null;
-  return {
-    id: r.id, endpointId: r.endpoint_id,
-    method: r.method, path: r.path,
-    status: r.status, delay: r.delay, body: r.body,
-  };
+  return { id:r.id, endpointId:r.endpoint_id, method:r.method, path:r.path,
+           status:r.status, delay:r.delay, body:r.body };
 }
-
 function rowToCrudTable(r) {
   if (!r) return null;
-  const count = maybe(stmts.rowCount.get(r.key))?.n || 0;
-  return { key: r.key, endpointId: r.endpoint_id, path: r.path, idField: r.id_field, count };
+  const count = db.prepare(`SELECT COUNT(*) as n FROM crud_rows WHERE table_key=?`).get(r.key)?.n||0;
+  return { key:r.key, endpointId:r.endpoint_id, path:r.path, idField:r.id_field, count };
 }
 
-function safeJSON(s) { try { return JSON.parse(s); } catch(_) { return s || null; } }
-function safeStr(v)  { return typeof v === 'string' ? v : (JSON.stringify(v) ?? null); }
-
-// ── PUBLIC API ────────────────────────────────────────────────────────────────
 module.exports = {
+  // USERS
+  getUserById(id)         { return rowToUser(db.prepare(`SELECT * FROM users WHERE id=?`).get(id)); },
+  getUserByGithubId(gid)  { return rowToUser(db.prepare(`SELECT * FROM users WHERE github_id=?`).get(String(gid))); },
+  upsertUser(u) {
+    db.prepare(`INSERT INTO users (id,github_id,login,name,email,avatar,plan,is_admin,last_login)
+      VALUES (?,?,?,?,?,?,?,?,datetime('now'))
+      ON CONFLICT(github_id) DO UPDATE SET
+        login=excluded.login,name=excluded.name,email=excluded.email,
+        avatar=excluded.avatar,last_login=datetime('now')`
+    ).run(u.id,String(u.githubId),u.login,u.name||null,u.email||null,u.avatar||null,u.plan||'free',u.isAdmin?1:0);
+    return module.exports.getUserByGithubId(u.githubId);
+  },
+  getAllUsers() {
+    return db.prepare(`
+      SELECT u.*,
+        (SELECT COUNT(*) FROM endpoints e WHERE e.user_id=u.id) as ep_count,
+        (SELECT COUNT(*) FROM requests r JOIN endpoints e ON r.endpoint_id=e.id WHERE e.user_id=u.id) as req_count
+      FROM users u ORDER BY u.created_at DESC`).all().map(r=>({...rowToUser(r),epCount:r.ep_count,reqCount:r.req_count}));
+  },
+  banUser(id,banned)   { db.prepare(`UPDATE users SET banned=? WHERE id=?`).run(banned?1:0,id); },
+  setAdmin(id,isAdmin) { db.prepare(`UPDATE users SET is_admin=? WHERE id=?`).run(isAdmin?1:0,id); },
+  countUsers()         { return db.prepare(`SELECT COUNT(*) as n FROM users`).get()?.n||0; },
 
-  // ── Endpoints ──────────────────────────────────────────────────────────────
-  getAllEndpoints() { return stmts.epAll.all().map(rowToEndpoint); },
-  getEndpoint(id)  { return rowToEndpoint(maybe(stmts.epGet.get(id))); },
+  // SESSIONS
+  createSession(token,userId,expiresAt) {
+    db.prepare(`INSERT OR REPLACE INTO sessions VALUES (?,?,datetime('now'),?)`).run(token,userId,expiresAt);
+  },
+  getSession(token) {
+    const r = db.prepare(`SELECT * FROM sessions WHERE token=? AND expires_at>datetime('now')`).get(token);
+    return r ? {token:r.token,userId:r.user_id,expiresAt:r.expires_at} : null;
+  },
+  deleteSession(token) { db.prepare(`DELETE FROM sessions WHERE token=?`).run(token); },
+  cleanExpiredSessions() { db.prepare(`DELETE FROM sessions WHERE expires_at<=datetime('now')`).run(); },
+
+  // ENDPOINTS
+  getAllEndpoints(userId) {
+    if (userId) return db.prepare(`SELECT * FROM endpoints WHERE user_id=? ORDER BY created_at DESC`).all(userId).map(rowToEndpoint);
+    return db.prepare(`SELECT * FROM endpoints ORDER BY created_at DESC`).all().map(rowToEndpoint);
+  },
+  getEndpoint(id)  { return rowToEndpoint(db.prepare(`SELECT * FROM endpoints WHERE id=?`).get(id)); },
   saveEndpoint(ep) {
-    stmts.epInsert.run(
-      ep.id, ep.name, ep.path || null,
-      ep.corsEnabled ? 1 : 0,
-      ep.globalDelay  || 0,
-      ep.rateLimit    || 100,
-      ep.requestCount || 0,
-      ep.createdAt    || new Date().toISOString()
-    );
+    db.prepare(`INSERT OR REPLACE INTO endpoints (id,user_id,name,path,cors,global_delay,rate_limit,req_count,created_at) VALUES (?,?,?,?,?,?,?,?,?)`
+    ).run(ep.id,ep.userId||null,ep.name,ep.path||null,ep.corsEnabled?1:0,ep.globalDelay||0,ep.rateLimit||100,ep.requestCount||0,ep.createdAt||new Date().toISOString());
   },
-  updateEndpoint(ep) {
-    stmts.epUpdate.run(
-      ep.name, ep.path || null,
-      ep.corsEnabled ? 1 : 0,
-      ep.globalDelay || 0,
-      ep.rateLimit   || 100,
-      ep.id
-    );
+  patchEndpoint(id,fields) {
+    const sets=[],vals=[];
+    if (fields.globalDelay!==undefined){sets.push('global_delay=?');vals.push(fields.globalDelay);}
+    if (fields.name!==undefined)       {sets.push('name=?');        vals.push(fields.name);}
+    if (sets.length){vals.push(id);db.prepare(`UPDATE endpoints SET ${sets.join(',')} WHERE id=?`).run(...vals);}
   },
-  deleteEndpoint(id) { stmts.epDelete.run(id); },
-  incrementCount(id) { stmts.epIncCount.run(id); },
+  deleteEndpoint(id) { db.prepare(`DELETE FROM endpoints WHERE id=?`).run(id); },
+  incrementCount(id) { db.prepare(`UPDATE endpoints SET req_count=req_count+1 WHERE id=?`).run(id); },
+  countEndpoints()   { return db.prepare(`SELECT COUNT(*) as n FROM endpoints`).get()?.n||0; },
 
-  // ── Requests ───────────────────────────────────────────────────────────────
-  getRequests(epId) { return stmts.reqByEp.all(epId).map(rowToRequest); },
+  // REQUESTS
+  getRequests(epId) {
+    return db.prepare(`SELECT * FROM requests WHERE endpoint_id=? ORDER BY ts DESC LIMIT 200`).all(epId).map(rowToRequest);
+  },
   saveRequest(r) {
-    const existing = stmts.reqByEp.all(r.endpointId);
-    if (existing.length >= 200) stmts.reqDelOld.run(existing[existing.length - 1].id);
-    stmts.reqInsert.run(
-      r.id, r.endpointId, r.method, r.path, r.fullUrl,
-      r.status, r.latency || 0, r.ip || null,
-      safeStr(r.headers), safeStr(r.queryParams),
-      r.requestBody  || null,
-      r.responseBody || null,
-      r.matchedRule  || null,
-      r.timestamp    || new Date().toISOString()
-    );
+    const existing = db.prepare(`SELECT id FROM requests WHERE endpoint_id=? ORDER BY ts DESC LIMIT 200`).all(r.endpointId);
+    if (existing.length>=200) db.prepare(`DELETE FROM requests WHERE id=?`).run(existing[existing.length-1].id);
+    db.prepare(`INSERT INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).run(r.id,r.endpointId,r.method,r.path,r.fullUrl,r.status,r.latency||0,r.ip||null,
+          safeStr(r.headers),safeStr(r.queryParams),r.requestBody||null,r.responseBody||null,
+          r.matchedRule||null,r.timestamp||new Date().toISOString());
   },
-  clearRequests(epId) { stmts.reqClear.run(epId); },
+  clearRequests(epId) { db.prepare(`DELETE FROM requests WHERE endpoint_id=?`).run(epId); },
+  countRequests()     { return db.prepare(`SELECT COUNT(*) as n FROM requests`).get()?.n||0; },
+  reqPerDay(days=30)  {
+    return db.prepare(`SELECT date(ts) as day,COUNT(*) as n FROM requests WHERE ts>=datetime('now','-${days} days') GROUP BY day ORDER BY day`).all();
+  },
 
-  // ── Rules ──────────────────────────────────────────────────────────────────
-  getRules(epId) { return stmts.rulesByEp.all(epId).map(rowToRule); },
+  // RULES
+  getRules(epId) { return db.prepare(`SELECT * FROM rules WHERE endpoint_id=? ORDER BY created_at DESC`).all(epId).map(rowToRule); },
   saveRule(r) {
-    stmts.ruleInsert.run(
-      r.id, r.endpointId,
-      r.method    || '*',
-      r.path      || '/*',
-      r.status    || 200,
-      r.delay     || 0,
-      r.body      || null,
-      r.createdAt || new Date().toISOString()
-    );
+    db.prepare(`INSERT INTO rules VALUES (?,?,?,?,?,?,?,?)`
+    ).run(r.id,r.endpointId,r.method||'*',r.path||'/*',r.status||200,r.delay||0,r.body||null,r.createdAt||new Date().toISOString());
   },
-  deleteRule(id) { stmts.ruleDelete.run(id); },
+  deleteRule(id) { db.prepare(`DELETE FROM rules WHERE id=?`).run(id); },
 
-  // ── CRUD Tables ────────────────────────────────────────────────────────────
-  getCrudTablesForEndpoint(epId) { return stmts.crudByEp.all(epId).map(rowToCrudTable); },
-  getAllCrudTables()              { return stmts.crudAll.all().map(rowToCrudTable); },
-  getCrudTable(key)              { return rowToCrudTable(maybe(stmts.crudGet.get(key))); },
-  saveCrudTable(key, epId, path, idField) {
-    stmts.crudInsert.run(key, epId, path, idField || 'id', new Date().toISOString());
+  // CRUD TABLES
+  getCrudTablesForEndpoint(epId) { return db.prepare(`SELECT * FROM crud_tables WHERE endpoint_id=?`).all(epId).map(rowToCrudTable); },
+  getCrudTable(key)              { return rowToCrudTable(db.prepare(`SELECT * FROM crud_tables WHERE key=?`).get(key)); },
+  saveCrudTable(key,epId,path,idField) {
+    db.prepare(`INSERT OR REPLACE INTO crud_tables VALUES (?,?,?,?,?)`).run(key,epId,path,idField||'id',new Date().toISOString());
   },
-  deleteCrudTable(key) { stmts.crudDelete.run(key); },
+  deleteCrudTable(key) { db.prepare(`DELETE FROM crud_tables WHERE key=?`).run(key); },
 
-  // ── CRUD Rows ──────────────────────────────────────────────────────────────
-  getCrudRows(tableKey)       { return stmts.rowsByTable.all(tableKey).map(r => safeJSON(r.data)); },
-  getCrudRow(tableKey, rowId) {
-    const r = maybe(stmts.rowGet.get(rowId, tableKey));
+  // CRUD ROWS
+  getCrudRows(tableKey) { return db.prepare(`SELECT * FROM crud_rows WHERE table_key=? ORDER BY created_at ASC`).all(tableKey).map(r=>safeJSON(r.data)); },
+  getCrudRow(tableKey,rowId) {
+    const r = db.prepare(`SELECT * FROM crud_rows WHERE row_id=? AND table_key=?`).get(rowId,tableKey);
     return r ? safeJSON(r.data) : null;
   },
-  saveCrudRow(tableKey, rowId, data) {
-    const existing = maybe(stmts.rowGet.get(rowId, tableKey));
-    const dataStr  = safeStr(data);
-    if (existing) {
-      stmts.rowUpdate.run(dataStr, rowId, tableKey);
-    } else {
-      stmts.rowInsert.run(rowId, tableKey, dataStr, new Date().toISOString(), new Date().toISOString());
-    }
+  saveCrudRow(tableKey,rowId,data) {
+    const existing = db.prepare(`SELECT row_id FROM crud_rows WHERE row_id=? AND table_key=?`).get(rowId,tableKey);
+    const ds = safeStr(data);
+    if (existing) db.prepare(`UPDATE crud_rows SET data=?,updated_at=datetime('now') WHERE row_id=? AND table_key=?`).run(ds,rowId,tableKey);
+    else db.prepare(`INSERT INTO crud_rows VALUES (?,?,?,datetime('now'),datetime('now'))`).run(rowId,tableKey,ds);
   },
-  deleteCrudRow(tableKey, rowId) { stmts.rowDelete.run(rowId, tableKey); },
-  clearCrudRows(tableKey)        { stmts.rowsClear.run(tableKey); },
-  countCrudRows(tableKey)        { return maybe(stmts.rowCount.get(tableKey))?.n || 0; },
+  deleteCrudRow(tableKey,rowId) { db.prepare(`DELETE FROM crud_rows WHERE row_id=? AND table_key=?`).run(rowId,tableKey); },
+  clearCrudRows(tableKey)       { db.prepare(`DELETE FROM crud_rows WHERE table_key=?`).run(tableKey); },
+  countCrudRows(tableKey)       { return db.prepare(`SELECT COUNT(*) as n FROM crud_rows WHERE table_key=?`).get(tableKey)?.n||0; },
 
-  // ── Export / Import ────────────────────────────────────────────────────────
+  // EXPORT / IMPORT
   exportTable(tableKey) {
-    const tbl = maybe(stmts.crudGet.get(tableKey));
+    const tbl = db.prepare(`SELECT * FROM crud_tables WHERE key=?`).get(tableKey);
     if (!tbl) return null;
     return { meta: rowToCrudTable(tbl), rows: module.exports.getCrudRows(tableKey) };
   },
-  importTable(tableKey, epId, path, idField, rows) {
-    module.exports.saveCrudTable(tableKey, epId, path, idField);
+  importTable(tableKey,epId,path,idField,rows) {
+    module.exports.saveCrudTable(tableKey,epId,path,idField);
     module.exports.clearCrudRows(tableKey);
     for (const row of rows) {
-      const rowId = String(
-        row[idField] || row.id ||
-        require('crypto').randomBytes(4).toString('hex').toUpperCase()
-      );
-      module.exports.saveCrudRow(tableKey, rowId, row);
+      const rowId = String(row[idField]||row.id||require('crypto').randomBytes(4).toString('hex').toUpperCase());
+      module.exports.saveCrudRow(tableKey,rowId,row);
     }
     return rows.length;
   },
 
-  // Raw db para queries avançadas
+  // ADMIN STATS
+  getAdminStats() {
+    return {
+      totalUsers:     db.prepare(`SELECT COUNT(*) as n FROM users`).get()?.n||0,
+      totalEndpoints: db.prepare(`SELECT COUNT(*) as n FROM endpoints`).get()?.n||0,
+      totalRequests:  db.prepare(`SELECT COUNT(*) as n FROM requests`).get()?.n||0,
+      reqToday:       db.prepare(`SELECT COUNT(*) as n FROM requests WHERE date(ts)=date('now')`).get()?.n||0,
+      newUsersWeek:   db.prepare(`SELECT COUNT(*) as n FROM users WHERE created_at>=datetime('now','-7 days')`).get()?.n||0,
+      chart:          db.prepare(`SELECT date(ts) as day,COUNT(*) as n FROM requests WHERE ts>=datetime('now','-29 days') GROUP BY day ORDER BY day`).all(),
+      topEndpoints:   db.prepare(`SELECT e.id,e.name,e.req_count,u.login as owner FROM endpoints e LEFT JOIN users u ON e.user_id=u.id ORDER BY e.req_count DESC LIMIT 10`).all(),
+      usersByPlan:    db.prepare(`SELECT plan,COUNT(*) as n FROM users GROUP BY plan`).all(),
+    };
+  },
+
   raw: db,
 };

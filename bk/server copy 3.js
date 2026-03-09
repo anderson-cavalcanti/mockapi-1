@@ -26,9 +26,9 @@ process.emit = function(name, data) {
   return origEmit.apply(process, arguments);
 };
 
-const db     = require('./db.js');
-const faker  = require('./faker.js');
-const { parseOpenAPI } = require('./openapi.js');
+const db     = require('../db.js');
+const faker  = require('../faker.js');
+const { parseOpenAPI } = require('../openapi.js');
 
 function genId(len = 6) {
   return crypto.randomBytes(len).toString('hex').toUpperCase().slice(0, len);
@@ -420,14 +420,20 @@ async function handleRequest(req, res) {
     const matchedRule = matchRule(rules, method, subPath);
 
     // Auto-register CRUD table on first POST to unknown path
+    // Only auto-register if path has at least one segment (not root '/')
     if (!matchedRule && method === 'POST') {
       const cleanPath = subPath.replace(/\/$/, '');
-      const tables = db.getCrudTablesForEndpoint(epId);
-      const hasTable = tables.some(t => cleanPath === t.path || cleanPath.startsWith(t.path + '/'));
-      if (!hasTable) {
-        const key = epId + ':' + cleanPath;
-        db.saveCrudTable(key, epId, cleanPath, 'id');
-        broadcast(epId, 'crud_table_updated', db.getCrudTable(key));
+      if (cleanPath && cleanPath !== '/') {
+        // Only register the first segment (e.g. /users/foo -> /users)
+        const segments = cleanPath.split('/').filter(Boolean);
+        const tablePath = '/' + segments[0];
+        const tables = db.getCrudTablesForEndpoint(epId);
+        const hasTable = tables.some(t => t.path === tablePath || cleanPath.startsWith(t.path + '/'));
+        if (!hasTable) {
+          const key = epId + ':' + tablePath;
+          db.saveCrudTable(key, epId, tablePath, 'id');
+          broadcast(epId, 'crud_table_updated', db.getCrudTable(key));
+        }
       }
     }
 
@@ -439,18 +445,30 @@ async function handleRequest(req, res) {
     const globalDelay = ep.globalDelay || 0;
     const ruleDelay   = matchedRule ? (matchedRule.delay || 0) : 0;
     const totalDelay  = globalDelay + ruleDelay;
-    const statusCode  = crudResponse ? crudResponse.status : (matchedRule ? matchedRule.status : 200);
-    let responseBody;
+
+    // Determine status and body
+    let statusCode, responseBody;
     if (crudResponse) {
+      statusCode   = crudResponse.status;
       responseBody = JSON.stringify(crudResponse.body);
-    } else if (matchedRule?.body) {
-      // Support faker in rule bodies too
+    } else if (matchedRule) {
+      statusCode = matchedRule.status;
       try {
         const parsed_body = JSON.parse(matchedRule.body);
         responseBody = JSON.stringify(faker.processTemplate(parsed_body));
       } catch(_) { responseBody = matchedRule.body; }
     } else {
-      responseBody = JSON.stringify({ ok: true, endpoint: epId, path: subPath, timestamp: new Date().toISOString() });
+      // No CRUD table and no rule matched — helpful 404
+      const tables = db.getCrudTablesForEndpoint(epId);
+      statusCode = 404;
+      responseBody = JSON.stringify({
+        error: 'No route matched',
+        path: subPath,
+        hint: tables.length
+          ? 'Available paths: ' + tables.map(t => t.path).join(', ')
+          : 'No CRUD tables created yet. Create one in the dashboard under the CRUD tab.',
+        docs: 'Create a Mock Rule or CRUD table in the dashboard to handle this path.'
+      });
     }
 
     const record = {

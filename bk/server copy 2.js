@@ -26,56 +26,13 @@ process.emit = function(name, data) {
   return origEmit.apply(process, arguments);
 };
 
-const db     = require('./db.js');
-const faker  = require('./faker.js');
-const { parseOpenAPI } = require('./openapi.js');
+const db     = require('../db.js');
+const faker  = require('../faker.js');
+const { parseOpenAPI } = require('../openapi.js');
 
 function genId(len = 6) {
   return crypto.randomBytes(len).toString('hex').toUpperCase().slice(0, len);
 }
-
-// ── AUTH CONFIG ───────────────────────────────────────────────────────────────
-const GITHUB_CLIENT_ID     = process.env.GITHUB_CLIENT_ID     || '';
-const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || '';
-const SESSION_SECRET       = process.env.SESSION_SECRET       || 'dev_secret_change_me';
-const ADMIN_GITHUB_ID      = process.env.ADMIN_GITHUB_ID      || '';
-const AUTH_ENABLED         = !!GITHUB_CLIENT_ID;
-
-function parseCookies(req) {
-  const list = {};
-  const rc = req.headers.cookie;
-  if (rc) rc.split(';').forEach(c => {
-    const [k, ...v] = c.trim().split('=');
-    list[k.trim()] = decodeURIComponent(v.join('='));
-  });
-  return list;
-}
-
-function getSessionUser(req) {
-  if (!AUTH_ENABLED) return null;
-  const cookies = parseCookies(req);
-  const token = cookies['mockapi_session'];
-  if (!token) return null;
-  const session = db.getSession(token);
-  if (!session) return null;
-  return db.getUserById(session.userId);
-}
-
-function requireAuth(req, res) {
-  const user = getSessionUser(req);
-  if (!user) { res.writeHead(302, { Location: '/login' }); res.end(); return null; }
-  if (user.banned) { res.writeHead(403, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Account banned'})); return null; }
-  return user;
-}
-
-function requireAdmin(req, res) {
-  const user = requireAuth(req, res);
-  if (!user) return null;
-  if (!user.isAdmin) { res.writeHead(403, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Admin only'})); return null; }
-  return user;
-}
-
-setInterval(() => db.cleanExpiredSessions(), 60 * 60 * 1000);
 
 // ── WEBSOCKET (RFC 6455) ──────────────────────────────────────────────────────
 const wsClients = new Set();
@@ -255,9 +212,7 @@ async function handleRequest(req, res) {
   // ── DASHBOARD
   if (method === 'GET' && (pathname === '/' || pathname === '/dashboard')) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    const dashUser = getSessionUser(req);
-    if (AUTH_ENABLED && !dashUser) { res.writeHead(302, { Location: '/login' }); res.end(); return; }
-    res.end(getDashboardHTML(PORT, getBaseUrl(req), dashUser)); return;
+    res.end(getDashboardHTML(PORT, getBaseUrl(req))); return;
   }
 
   // ── HEALTH CHECK
@@ -265,150 +220,15 @@ async function handleRequest(req, res) {
     return json(res, { ok: true, version: '2.0.0', uptime: Math.floor(process.uptime()), ts: new Date().toISOString() });
   }
 
-  // ── AUTH: Login page
-  if (method === 'GET' && pathname === '/login') {
-    const user = getSessionUser(req);
-    if (user) { res.writeHead(302, { Location: '/' }); res.end(); return; }
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(getLoginHTML(getBaseUrl(req))); return;
-  }
-
-  // ── AUTH: GitHub OAuth start
-  if (method === 'GET' && pathname === '/auth/github') {
-    if (!AUTH_ENABLED) { res.writeHead(302, { Location: '/' }); res.end(); return; }
-    const state = crypto.randomBytes(16).toString('hex');
-    const ghUrl = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&scope=read:user,user:email&state=${state}`;
-    res.writeHead(302, { Location: ghUrl });
-    res.end(); return;
-  }
-
-  // ── AUTH: GitHub OAuth callback
-  if (method === 'GET' && pathname === '/auth/github/callback') {
-    const code  = parsed.query.code;
-    if (!code) { res.writeHead(302, { Location: '/login' }); res.end(); return; }
-    try {
-      // Exchange code for access token
-      const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify({ client_id: GITHUB_CLIENT_ID, client_secret: GITHUB_CLIENT_SECRET, code })
-      });
-      const tokenData = await tokenRes.json();
-      const accessToken = tokenData.access_token;
-      if (!accessToken) throw new Error('No access token');
-
-      // Get GitHub user info
-      const userRes = await fetch('https://api.github.com/user', {
-        headers: { Authorization: `token ${accessToken}`, 'User-Agent': 'MockAPI-Inspector' }
-      });
-      const ghUser = await userRes.json();
-
-      // Get email if not public
-      let email = ghUser.email;
-      if (!email) {
-        const emailRes = await fetch('https://api.github.com/user/emails', {
-          headers: { Authorization: `token ${accessToken}`, 'User-Agent': 'MockAPI-Inspector' }
-        });
-        const emails = await emailRes.json();
-        const primary = Array.isArray(emails) ? emails.find(e => e.primary) : null;
-        email = primary ? primary.email : null;
-      }
-
-      // Upsert user — first user or matching ADMIN_GITHUB_ID gets admin
-      const isAdmin = String(ghUser.id) === String(ADMIN_GITHUB_ID) || db.countUsers() === 0;
-      const user = db.upsertUser({
-        id: 'U' + String(ghUser.id),
-        githubId: ghUser.id,
-        login: ghUser.login,
-        name: ghUser.name || ghUser.login,
-        email, avatar: ghUser.avatar_url,
-        plan: 'free', isAdmin
-      });
-
-      // Create session (30 days)
-      const token = crypto.randomBytes(32).toString('hex');
-      const expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-      db.createSession(token, user.id, expires);
-
-      res.writeHead(302, {
-        Location: '/',
-        'Set-Cookie': `mockapi_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30*24*3600}`
-      });
-      res.end();
-    } catch(e) {
-      console.error('[auth] GitHub callback error:', e);
-      res.writeHead(302, { Location: '/login?error=1' });
-      res.end();
-    }
-    return;
-  }
-
-  // ── AUTH: Logout
-  if (method === 'GET' && pathname === '/auth/logout') {
-    const cookies = parseCookies(req);
-    if (cookies['mockapi_session']) db.deleteSession(cookies['mockapi_session']);
-    res.writeHead(302, {
-      Location: '/login',
-      'Set-Cookie': 'mockapi_session=; Path=/; HttpOnly; Max-Age=0'
-    });
-    res.end(); return;
-  }
-
-  // ── AUTH: Current user info
-  if (method === 'GET' && pathname === '/api/me') {
-    const user = getSessionUser(req);
-    if (!user) return json(res, { loggedIn: false, authEnabled: AUTH_ENABLED });
-    return json(res, { loggedIn: true, authEnabled: AUTH_ENABLED, user: {
-      id: user.id, login: user.login, name: user.name,
-      avatar: user.avatar, plan: user.plan, isAdmin: user.isAdmin
-    }});
-  }
-
-  // ── ADMIN PANEL
-  if (method === 'GET' && pathname === '/admin') {
-    const user = requireAdmin(req, res);
-    if (!user) return;
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(getAdminHTML(getBaseUrl(req), user)); return;
-  }
-
-  // ── ADMIN API: Stats
-  if (method === 'GET' && pathname === '/api/admin/stats') {
-    if (!requireAdmin(req, res)) return;
-    return json(res, db.getAdminStats());
-  }
-
-  // ── ADMIN API: Users list
-  if (method === 'GET' && pathname === '/api/admin/users') {
-    if (!requireAdmin(req, res)) return;
-    return json(res, db.getAllUsers());
-  }
-
-  // ── ADMIN API: Ban/unban user
-  const adminUserMatch = pathname.match(/^\/api\/admin\/users\/([^/]+)\/(ban|unban|promote|demote)$/);
-  if (method === 'POST' && adminUserMatch) {
-    if (!requireAdmin(req, res)) return;
-    const [, userId, action] = adminUserMatch;
-    if (action === 'ban')     db.banUser(userId, true);
-    if (action === 'unban')   db.banUser(userId, false);
-    if (action === 'promote') db.setAdmin(userId, true);
-    if (action === 'demote')  db.setAdmin(userId, false);
-    return json(res, { ok: true, action, userId });
-  }
-
-  // ── ENDPOINTS (with auth filter)
+  // ── ENDPOINTS
   if (method === 'GET' && pathname === '/api/endpoints') {
-    const user = getSessionUser(req);
-    return json(res, db.getAllEndpoints(user ? user.id : null));
+    return json(res, db.getAllEndpoints());
   }
   if (method === 'POST' && pathname === '/api/endpoints') {
-    const user = AUTH_ENABLED ? requireAuth(req, res) : null;
-    if (AUTH_ENABLED && !user) return;
     const body = await readBody(req);
     let data = {}; try { data = JSON.parse(body); } catch(_) {}
     const id = genId();
-    const ep = { id, userId: user ? user.id : null,
-                 name: data.name || `Endpoint ${id}`, path: data.path || `/${id}`,
+    const ep = { id, name: data.name || `Endpoint ${id}`, path: data.path || `/${id}`,
                  corsEnabled: data.corsEnabled !== false, globalDelay: parseInt(data.globalDelay)||0,
                  rateLimit: parseInt(data.rateLimit)||100, requestCount: 0, createdAt: new Date().toISOString() };
     db.saveEndpoint(ep);
@@ -600,20 +420,14 @@ async function handleRequest(req, res) {
     const matchedRule = matchRule(rules, method, subPath);
 
     // Auto-register CRUD table on first POST to unknown path
-    // Only auto-register if path has at least one segment (not root '/')
     if (!matchedRule && method === 'POST') {
       const cleanPath = subPath.replace(/\/$/, '');
-      if (cleanPath && cleanPath !== '/') {
-        // Only register the first segment (e.g. /users/foo -> /users)
-        const segments = cleanPath.split('/').filter(Boolean);
-        const tablePath = '/' + segments[0];
-        const tables = db.getCrudTablesForEndpoint(epId);
-        const hasTable = tables.some(t => t.path === tablePath || cleanPath.startsWith(t.path + '/'));
-        if (!hasTable) {
-          const key = epId + ':' + tablePath;
-          db.saveCrudTable(key, epId, tablePath, 'id');
-          broadcast(epId, 'crud_table_updated', db.getCrudTable(key));
-        }
+      const tables = db.getCrudTablesForEndpoint(epId);
+      const hasTable = tables.some(t => cleanPath === t.path || cleanPath.startsWith(t.path + '/'));
+      if (!hasTable) {
+        const key = epId + ':' + cleanPath;
+        db.saveCrudTable(key, epId, cleanPath, 'id');
+        broadcast(epId, 'crud_table_updated', db.getCrudTable(key));
       }
     }
 
@@ -625,30 +439,18 @@ async function handleRequest(req, res) {
     const globalDelay = ep.globalDelay || 0;
     const ruleDelay   = matchedRule ? (matchedRule.delay || 0) : 0;
     const totalDelay  = globalDelay + ruleDelay;
-
-    // Determine status and body
-    let statusCode, responseBody;
+    const statusCode  = crudResponse ? crudResponse.status : (matchedRule ? matchedRule.status : 200);
+    let responseBody;
     if (crudResponse) {
-      statusCode   = crudResponse.status;
       responseBody = JSON.stringify(crudResponse.body);
-    } else if (matchedRule) {
-      statusCode = matchedRule.status;
+    } else if (matchedRule?.body) {
+      // Support faker in rule bodies too
       try {
         const parsed_body = JSON.parse(matchedRule.body);
         responseBody = JSON.stringify(faker.processTemplate(parsed_body));
       } catch(_) { responseBody = matchedRule.body; }
     } else {
-      // No CRUD table and no rule matched — helpful 404
-      const tables = db.getCrudTablesForEndpoint(epId);
-      statusCode = 404;
-      responseBody = JSON.stringify({
-        error: 'No route matched',
-        path: subPath,
-        hint: tables.length
-          ? 'Available paths: ' + tables.map(t => t.path).join(', ')
-          : 'No CRUD tables created yet. Create one in the dashboard under the CRUD tab.',
-        docs: 'Create a Mock Rule or CRUD table in the dashboard to handle this path.'
-      });
+      responseBody = JSON.stringify({ ok: true, endpoint: epId, path: subPath, timestamp: new Date().toISOString() });
     }
 
     const record = {
@@ -736,237 +538,8 @@ server.listen(PORT, () => {
   console.log(`  ╚${line}╝\n`);
 });
 
-
-// ── LOGIN PAGE ────────────────────────────────────────────────────────────────
-function getLoginHTML(baseUrl) {
-  return `<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Login — MockAPI Inspector</title>
-<style>
-  *{margin:0;padding:0;box-sizing:border-box}
-  body{background:#0a0a0a;color:#fff;font-family:'Inter',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}
-  .card{background:#111;border:1px solid #1a1a1a;border-radius:16px;padding:48px 40px;width:100%;max-width:400px;text-align:center}
-  .logo{font-size:32px;margin-bottom:8px}
-  h1{font-size:22px;font-weight:700;margin-bottom:6px}
-  p{color:#666;font-size:14px;margin-bottom:32px;line-height:1.5}
-  .btn-github{display:flex;align-items:center;justify-content:center;gap:10px;background:#fff;color:#000;border:none;border-radius:8px;padding:14px 24px;font-size:15px;font-weight:600;cursor:pointer;text-decoration:none;transition:all .2s;width:100%}
-  .btn-github:hover{background:#f0f0f0;transform:translateY(-1px)}
-  .btn-github svg{width:20px;height:20px}
-  .features{display:grid;gap:10px;margin-top:32px;text-align:left}
-  .feature{display:flex;gap:10px;align-items:flex-start;font-size:13px;color:#555}
-  .feature .icon{color:#00FF87;font-size:16px;flex-shrink:0}
-  .divider{border:none;border-top:1px solid #1a1a1a;margin:24px 0}
-  .footer{font-size:12px;color:#333;margin-top:24px}
-</style>
-</head>
-<body>
-<div class="card">
-  <div class="logo">⚡</div>
-  <h1>MockAPI Inspector</h1>
-  <p>Mock server com CRUD real, Faker integrado e import OpenAPI. Sem cartão de crédito.</p>
-  <a href="/auth/github" class="btn-github">
-    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
-    Entrar com GitHub
-  </a>
-  <hr class="divider"/>
-  <div class="features">
-    <div class="feature"><span class="icon">✦</span><span>CRUD com estado real — GET, POST, PUT, DELETE automáticos</span></div>
-    <div class="feature"><span class="icon">✦</span><span>Faker integrado — seed de dados realistas em 1 clique</span></div>
-    <div class="feature"><span class="icon">✦</span><span>Import OpenAPI/Swagger — gera mocks do seu spec automaticamente</span></div>
-    <div class="feature"><span class="icon">✦</span><span>Histórico de requisições em tempo real</span></div>
-  </div>
-  <p class="footer">Ao entrar, você concorda com os termos de uso.</p>
-</div>
-</body></html>`;
-}
-
-// ── ADMIN PANEL ───────────────────────────────────────────────────────────────
-function getAdminHTML(baseUrl, adminUser) {
-  return `<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Admin — MockAPI Inspector</title>
-<style>
-  *{margin:0;padding:0;box-sizing:border-box}
-  body{background:#0a0a0a;color:#e0e0e0;font-family:'Inter',sans-serif;min-height:100vh}
-  header{background:#111;border-bottom:1px solid #1a1a1a;padding:16px 32px;display:flex;align-items:center;justify-content:space-between}
-  header h1{font-size:16px;font-weight:700;color:#fff}
-  header .right{display:flex;gap:12px;align-items:center;font-size:13px;color:#666}
-  header a{color:#00FF87;text-decoration:none;font-size:13px}
-  .container{max-width:1200px;margin:0 auto;padding:32px}
-  .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:32px}
-  .stat-card{background:#111;border:1px solid #1a1a1a;border-radius:12px;padding:24px}
-  .stat-card .label{font-size:12px;color:#555;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px}
-  .stat-card .value{font-size:36px;font-weight:700;color:#fff}
-  .stat-card .sub{font-size:12px;color:#444;margin-top:4px}
-  .stat-card.green .value{color:#00FF87}
-  .section{background:#111;border:1px solid #1a1a1a;border-radius:12px;padding:24px;margin-bottom:24px}
-  .section h2{font-size:14px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:20px}
-  table{width:100%;border-collapse:collapse;font-size:13px}
-  th{text-align:left;color:#444;font-weight:500;padding:8px 12px;border-bottom:1px solid #1a1a1a}
-  td{padding:10px 12px;border-bottom:1px solid #0f0f0f;vertical-align:middle}
-  tr:hover td{background:#0f0f0f}
-  .avatar{width:28px;height:28px;border-radius:50%;margin-right:8px;vertical-align:middle}
-  .badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
-  .badge.admin{background:#1a1a00;color:#FFD700;border:1px solid #333300}
-  .badge.free{background:#0a1a0a;color:#00FF87;border:1px solid #003300}
-  .badge.banned{background:#1a0a0a;color:#ff4444;border:1px solid #330000}
-  .btn{padding:4px 10px;border-radius:4px;border:1px solid #222;background:#0f0f0f;color:#888;font-size:11px;cursor:pointer;transition:all .15s}
-  .btn:hover{background:#1a1a1a;color:#fff}
-  .btn.danger{border-color:#330000;color:#ff4444}
-  .btn.danger:hover{background:#1a0a0a}
-  .btn.success{border-color:#003300;color:#00FF87}
-  .btn.success:hover{background:#0a1a0a}
-  #chart-wrap{height:120px;display:flex;align-items:flex-end;gap:3px;padding-top:10px}
-  .bar{background:#00FF8733;border-radius:2px 2px 0 0;flex:1;min-height:2px;transition:height .3s;cursor:default;position:relative}
-  .bar:hover{background:#00FF87}
-  .bar[title]{cursor:default}
-  .refresh-btn{float:right;font-size:11px;color:#444;cursor:pointer;background:none;border:none;padding:0}
-  .refresh-btn:hover{color:#00FF87}
-</style>
-</head>
-<body>
-<header>
-  <h1>⚡ MockAPI — Admin Panel</h1>
-  <div class="right">
-    <img src="${adminUser.avatar}" style="width:24px;height:24px;border-radius:50%"/>
-    <span>${adminUser.login}</span>
-    <a href="/">← Dashboard</a>
-    <a href="/auth/logout">Logout</a>
-  </div>
-</header>
-<div class="container">
-  <div class="stats-grid" id="stats-grid">
-    <div class="stat-card green">
-      <div class="label">Usuários</div>
-      <div class="value" id="stat-users">—</div>
-      <div class="sub" id="stat-users-week">— novos esta semana</div>
-    </div>
-    <div class="stat-card">
-      <div class="label">Endpoints</div>
-      <div class="value" id="stat-endpoints">—</div>
-    </div>
-    <div class="stat-card">
-      <div class="label">Requisições totais</div>
-      <div class="value" id="stat-requests">—</div>
-      <div class="sub" id="stat-req-today">— hoje</div>
-    </div>
-    <div class="stat-card">
-      <div class="label">Mock Rules</div>
-      <div class="value" id="stat-rules">—</div>
-    </div>
-  </div>
-
-  <div class="section">
-    <h2>Requisições — últimos 30 dias <button class="refresh-btn" onclick="loadStats()">↻ Atualizar</button></h2>
-    <div id="chart-wrap"></div>
-  </div>
-
-  <div class="section">
-    <h2>Top Endpoints por uso</h2>
-    <table id="top-endpoints-table">
-      <thead><tr><th>Endpoint</th><th>Owner</th><th>Requisições</th></tr></thead>
-      <tbody id="top-endpoints-body"><tr><td colspan="3" style="color:#444">Carregando...</td></tr></tbody>
-    </table>
-  </div>
-
-  <div class="section">
-    <h2>Usuários <button class="refresh-btn" onclick="loadUsers()">↻ Atualizar</button></h2>
-    <table>
-      <thead><tr><th>Usuário</th><th>Plano</th><th>Endpoints</th><th>Requisições</th><th>Criado em</th><th>Ações</th></tr></thead>
-      <tbody id="users-body"><tr><td colspan="6" style="color:#444">Carregando...</td></tr></tbody>
-    </table>
-  </div>
-</div>
-
-<script>
-async function loadStats() {
-  const r = await fetch('/api/admin/stats');
-  const d = await r.json();
-  document.getElementById('stat-users').textContent     = d.totalUsers;
-  document.getElementById('stat-users-week').textContent = d.newUsersWeek + ' novos esta semana';
-  document.getElementById('stat-endpoints').textContent  = d.totalEndpoints;
-  document.getElementById('stat-requests').textContent   = d.totalRequests.toLocaleString();
-  document.getElementById('stat-req-today').textContent  = d.reqToday.toLocaleString() + ' hoje';
-
-  // Chart
-  const wrap = document.getElementById('chart-wrap');
-  wrap.innerHTML = '';
-  const max = Math.max(...d.chart.map(c => c.n), 1);
-  d.chart.forEach(c => {
-    const bar = document.createElement('div');
-    bar.className = 'bar';
-    bar.style.height = Math.max((c.n / max) * 100, 2) + '%';
-    bar.title = c.day + ': ' + c.n + ' req';
-    wrap.appendChild(bar);
-  });
-
-  // Top endpoints
-  const tbody = document.getElementById('top-endpoints-body');
-  if (d.topEndpoints.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="3" style="color:#444">Nenhum endpoint ainda</td></tr>';
-  } else {
-    tbody.innerHTML = d.topEndpoints.map(e =>
-      '<tr><td><code style="color:#00FF87;font-size:12px">' + e.id + '</code> ' + e.name + '</td><td>' + (e.owner||'—') + '</td><td>' + e.req_count + '</td></tr>'
-    ).join('');
-  }
-}
-
-async function loadUsers() {
-  const r = await fetch('/api/admin/users');
-  const users = await r.json();
-  const tbody = document.getElementById('users-body');
-  if (users.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" style="color:#444">Nenhum usuário</td></tr>';
-    return;
-  }
-  tbody.innerHTML = users.map(u => {
-    const badges = [];
-    if (u.isAdmin) badges.push('<span class="badge admin">admin</span>');
-    if (u.banned)  badges.push('<span class="badge banned">banido</span>');
-    else           badges.push('<span class="badge free">' + u.plan + '</span>');
-    const actions = [];
-    if (!u.isAdmin) actions.push('<button class="btn success" onclick="promote(\''+u.id+'\')">Promover</button>');
-    else            actions.push('<button class="btn" onclick="demote(\''+u.id+'\')">Remover admin</button>');
-    if (!u.banned)  actions.push('<button class="btn danger" onclick="ban(\''+u.id+'\')">Banir</button>');
-    else            actions.push('<button class="btn" onclick="unban(\''+u.id+'\')">Desbanir</button>');
-    return '<tr>' +
-      '<td><img src="'+u.avatar+'" class="avatar"/><strong>'+u.login+'</strong> '+badges.join(' ')+'</td>' +
-      '<td>'+u.plan+'</td>' +
-      '<td>'+u.epCount+'</td>' +
-      '<td>'+u.reqCount+'</td>' +
-      '<td style="color:#444;font-size:11px">'+(u.createdAt||'').slice(0,10)+'</td>' +
-      '<td style="display:flex;gap:4px">'+actions.join('')+'</td>' +
-    '</tr>';
-  }).join('');
-}
-
-async function userAction(id, action) {
-  await fetch('/api/admin/users/' + id + '/' + action, { method: 'POST' });
-  loadUsers();
-}
-const ban     = id => userAction(id, 'ban');
-const unban   = id => userAction(id, 'unban');
-const promote = id => userAction(id, 'promote');
-const demote  = id => userAction(id, 'demote');
-
-loadStats();
-loadUsers();
-setInterval(loadStats, 30000);
-</script>
-</body></html>`;
-}
-
-function getDashboardHTML(port, baseUrl, currentUser) {
+function getDashboardHTML(port, baseUrl) {
   baseUrl = baseUrl || 'http://localhost:' + port;
-  const userAvatar = currentUser ? currentUser.avatar : '';
-  const userLogin  = currentUser ? currentUser.login  : '';
-  const isAdmin    = currentUser ? currentUser.isAdmin : false;
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -1170,17 +743,9 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
       </div>
     </div>
 
-    <div class="sidebar-footer" style="flex-direction:column;align-items:flex-start;gap:10px">
-      <div style="display:flex;align-items:center;gap:8px;width:100%">
-        <div class="status-dot" id="ws-dot" style="background:#FF4444;box-shadow:0 0 6px #FF4444"></div>
-        <span class="mono" style="font-size:10px;color:var(--text3);flex:1" id="ws-status">Conectando...</span>
-      </div>
-      \${userLogin ? \`<div style="display:flex;align-items:center;gap:8px;width:100%;padding-top:4px;border-top:1px solid var(--border)">
-        <img src="\${userAvatar}" style="width:24px;height:24px;border-radius:50%;flex-shrink:0"/>
-        <span style="font-size:12px;color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">\${userLogin}</span>
-        \${isAdmin ? \`<a href="/admin" style="font-size:10px;color:#FFD700;text-decoration:none;white-space:nowrap">Admin</a>\` : ''}
-        <a href="/auth/logout" style="font-size:10px;color:var(--text3);text-decoration:none">Sair</a>
-      </div>\` : ''}
+    <div class="sidebar-footer">
+      <div class="status-dot" id="ws-dot" style="background:#FF4444;box-shadow:0 0 6px #FF4444"></div>
+      <span class="mono" style="font-size:10px;color:var(--text3)" id="ws-status">Conectando...</span>
     </div>
   </div>
 
