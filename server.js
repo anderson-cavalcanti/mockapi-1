@@ -1193,7 +1193,7 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
         <div class="status-dot" id="ws-dot" style="background:#FF4444;box-shadow:0 0 6px #FF4444"></div>
         <span class="mono" style="font-size:10px;color:var(--text3);flex:1" id="ws-status">Conectando...</span>
       </div>
-      \${userBarHtml}
+      ${userBarHtml}
     </div>
   </div>
 
