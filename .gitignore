@@ -1,0 +1,22 @@
+# Dependências — o Render instala via npm install
+node_modules/
+
+# Banco de dados local — não sobe pro GitHub
+mockapi.db
+mockapi.db-shm
+mockapi.db-wal
+*.db
+*.db-shm
+*.db-wal
+
+# Arquivos de ambiente
+.env
+.env.local
+
+# Arquivos do sistema
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
