@@ -4,17 +4,8 @@
  */
 const Database = require('better-sqlite3');
 const path = require('path');
-const fs   = require('fs');
 
-// Priority: 1) DB_FILE env var (Render disk at /data/mockapi.db)
-//           2) ./data/mockapi.db  (local dev or ephemeral disk)
-//           3) :memory:           (last resort — data lost on restart)
-let DB_FILE = process.env.DB_FILE;
-if (!DB_FILE) {
-  const localDir = path.join(__dirname, 'data');
-  try { fs.mkdirSync(localDir, { recursive: true }); } catch(_) {}
-  DB_FILE = path.join(localDir, 'mockapi.db');
-}
+const DB_FILE = process.env.DB_FILE || path.join(__dirname, 'mockapi.db');
 
 let db;
 try {

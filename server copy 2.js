@@ -921,7 +921,7 @@ tbody tr:hover td{background:#0e0e0e}
 <body>
 <header>
   <div style="display:flex;align-items:center;gap:24px">
-    <a href="/" style="text-decoration:none" class="logo">⚡ <span>MockAPI</span> <span style="color:var(--text3);font-size:11px;font-weight:400">Admin</span></a>
+    <div class="logo">⚡ <span>MockAPI</span> <span style="color:var(--text3);font-size:11px;font-weight:400">Admin</span></div>
     <nav>
       <a href="#" class="active" onclick="showPage('overview',this)">Overview</a>
       <a href="#" onclick="showPage('users',this)">Usuários</a>
@@ -1120,10 +1120,10 @@ function renderUsers(users) {
     if (u.banned)  badges.push('<span class="badge banned">🚫 banido</span>');
     else           badges.push('<span class="badge ' + u.plan + '">' + u.plan + '</span>');
     const actions = [];
-    if (!u.isAdmin) actions.push('<button class="action-btn success" data-id="'+u.id+'" data-action="promote" onclick="actBtn(this)">Promover</button>');
-    else            actions.push('<button class="action-btn" data-id="'+u.id+'" data-action="demote" onclick="actBtn(this)">- Admin</button>');
-    if (!u.banned)  actions.push('<button class="action-btn danger" data-id="'+u.id+'" data-action="ban" onclick="actBtn(this)">Banir</button>');
-    else            actions.push('<button class="action-btn" data-id="'+u.id+'" data-action="unban" onclick="actBtn(this)">Desbanir</button>');
+    if (!u.isAdmin) actions.push('<button class="action-btn success" onclick="act(\''+u.id+'\',\'promote\')">Promover</button>');
+    else            actions.push('<button class="action-btn" onclick="act(\''+u.id+'\',\'demote\')">- Admin</button>');
+    if (!u.banned)  actions.push('<button class="action-btn danger" onclick="act(\''+u.id+'\',\'ban\')">Banir</button>');
+    else            actions.push('<button class="action-btn" onclick="act(\''+u.id+'\',\'unban\')">Desbanir</button>');
     return '<tr>'
       + '<td><img src="'+(u.avatar||'')+'" class="avatar"/><strong>'+u.login+'</strong> '+(u.name?'<span style="color:var(--text3);font-size:12px">'+u.name+'</span>':'')+' '+badges.join('')+'</td>'
       + '<td>'+u.plan+'</td>'
@@ -1154,7 +1154,6 @@ async function act(id, action) {
   await fetch('/api/admin/users/' + id + '/' + action, { method: 'POST' });
   loadUsers();
 }
-function actBtn(btn) { act(btn.dataset.id, btn.dataset.action); }
 
 loadStats();
 setInterval(loadStats, 30000);
