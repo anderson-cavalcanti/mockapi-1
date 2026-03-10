@@ -2003,6 +2003,8 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 /* MODAL */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:1000;animation:fadeIn .15s ease}
 .modal{background:var(--bg);border:1px solid var(--border2);border-radius:12px;padding:32px;width:500px;max-height:90vh;overflow:auto;box-shadow:0 25px 80px rgba(0,0,0,.8)}
+.revoke-btn{background:none;border:1px solid #2a2a2a;color:#555;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;transition:all .2s;flex-shrink:0}
+.revoke-btn:hover{color:#ff4444;border-color:#ff444433}
 .modal-title{font-size:18px;font-weight:700;color:#fff;margin-bottom:24px}
 .modal-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
 .form-group{margin-bottom:18px}
@@ -2767,7 +2769,7 @@ async function loadTokenList() {
         + '<div style="font-size:13px;color:#ccc;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(t.name) + '</div>'
         + '<div style="font-size:10px;color:#444;font-family:monospace;margin-top:2px">' + t.token_preview + ' · criado ' + created + ' · usado ' + lastUsed + '</div>'
         + '</div>'
-        + '<button data-tid="'+t.id+'" onclick="deleteToken(this)" style="background:none;border:1px solid #2a2a2a;color:#555;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer" onmouseover="this.style.color=\'#ff4444\';this.style.borderColor=\'#ff444433\'" onmouseout="this.style.color=\'#555\';this.style.borderColor=\'#2a2a2a\'">Revogar</button>'
+        + '<button data-tid="'+t.id+'" onclick="deleteToken(this)" class="revoke-btn">Revogar</button>'
         + '</div>';
     }).join('');
   } catch(e) {
