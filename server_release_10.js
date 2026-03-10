@@ -675,7 +675,7 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
 
   // ── ENDPOINTS (with auth filter)
   if (method === 'GET' && pathname === '/api/endpoints') {
-    const user = getSessionUser(req) || getTokenUser(req);
+    const user = getSessionUser(req);
     return json(res, db.getAllEndpoints(user ? user.id : null));
   }
   if (method === 'POST' && pathname === '/api/endpoints') {
