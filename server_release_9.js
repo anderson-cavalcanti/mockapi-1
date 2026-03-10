@@ -566,31 +566,6 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
     res.end(); return;
   }
 
-  // ── API TOKENS ────────────────────────────────────────────────────────────────
-  if (method === 'GET' && pathname === '/api/tokens') {
-    const user = requireAuth(req, res);
-    if (!user) return;
-    return json(res, db.listApiTokens(user.id));
-  }
-  if (method === 'POST' && pathname === '/api/tokens') {
-    const user = requireAuth(req, res);
-    if (!user) return;
-    const body = await readBody(req);
-    let data = {}; try { data = JSON.parse(body); } catch(_) {}
-    const name = (data.name || 'Token ' + Date.now()).slice(0, 60);
-    const crypto = require('crypto');
-    const token = 'mapi_' + crypto.randomBytes(24).toString('hex');
-    const row = db.createApiToken(user.id, name, token);
-    return json(res, { ...row, token });
-  }
-  const tokenDelMatch = pathname.match(/^\/api\/tokens\/([A-F0-9]+)$/);
-  if (method === 'DELETE' && tokenDelMatch) {
-    const user = requireAuth(req, res);
-    if (!user) return;
-    db.deleteApiToken(tokenDelMatch[1], user.id);
-    return json(res, { ok: true });
-  }
-
   // ── AUTH: Current user info
   if (method === 'GET' && pathname === '/api/me') {
     const user = getSessionUser(req);
