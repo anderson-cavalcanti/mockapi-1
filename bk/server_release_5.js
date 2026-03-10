@@ -30,9 +30,9 @@ process.emit = function(name, data) {
   return origEmit.apply(process, arguments);
 };
 
-const db     = require('./db.js');
-const faker  = require('./faker.js');
-const { parseOpenAPI } = require('./openapi.js');
+const db     = require('../db.js');
+const faker  = require('../faker.js');
+const { parseOpenAPI } = require('../openapi.js');
 
 function genId(len = 6) {
   return crypto.randomBytes(len).toString('hex').toUpperCase().slice(0, len);
@@ -325,49 +325,8 @@ async function handleRequest(req, res) {
   // ── UPGRADE PAGE
   if (method === 'GET' && pathname === '/upgrade') {
     const user = getSessionUser(req);
-    const userPlan = user ? user.plan : 'free';
-    const userLimits = getPlanLimits(userPlan);
-    const userEpUsed  = user ? db.countUserEndpoints(user.id) : 0;
-    const userReqUsed = user ? db.countUserReqsToday(user.id) : 0;
-    // Get all enabled plans from DB (excluding current if free, show all paid ones)
-    const allPlans = db.getAllPlanConfigs().filter(p => p.enabled || p.plan === userPlan);
-    const planDescs = {
-      free: 'Para explorar e testar a ferramenta.',
-      pro: 'Para devs e times pequenos que precisam de mais.',
-      team: 'Para equipes e projetos de maior escala.',
-      enterprise: 'Para empresas com demanda ilimitada.'
-    };
-    const planColors = { free:'#00FF87', pro:'#00FF87', team:'#4dabf7', enterprise:'#da77f2' };
-    const planOrder  = ['free','pro','team','enterprise'];
-    const sorted = allPlans.sort((a,b) => (planOrder.indexOf(a.plan)||99) - (planOrder.indexOf(b.plan)||99));
-    const cols = Math.min(sorted.length, 4);
-    const plansHtml = sorted.map(p => {
-      const isCurrent = p.plan === userPlan;
-      const isPopular = p.plan === 'pro';
-      const color = planColors[p.plan] || '#00FF87';
-      const inf = 999999;
-      const epLabel  = p.ep_limit  >= inf ? 'Ilimitado' : p.ep_limit.toLocaleString('pt-BR');
-      const reqLabel = p.req_per_day >= 999999999 ? 'Ilimitado' : p.req_per_day.toLocaleString('pt-BR');
-      const price    = p.price_brl || 0;
-      return `<div class="plan${isPopular ? ' popular' : ''}" style="${isCurrent ? 'opacity:.7' : ''}">
-        ${isPopular ? '<div class="plan-badge">MAIS POPULAR</div>' : ''}
-        <div class="plan-name">${p.label}</div>
-        <div class="plan-price"><sup>R$</sup>${price}<span>/mês</span></div>
-        <div class="plan-desc">${planDescs[p.plan] || ''}</div>
-        <ul class="plan-features">
-          <li><span class="check">✓</span> <strong>${epLabel} endpoints</strong></li>
-          <li><span class="check">✓</span> <strong>${reqLabel} req/dia</strong></li>
-          <li><span class="check">✓</span> CRUD + Faker + OpenAPI</li>
-          ${p.plan !== 'free' ? '<li><span class="check">✓</span> Suporte prioritário</li>' : ''}
-          ${p.plan === 'team' || p.plan === 'enterprise' ? '<li><span class="check">✓</span> SLA e onboarding</li>' : ''}
-        </ul>
-        ${isCurrent
-          ? '<div class="btn btn-outline" style="cursor:default;text-align:center">Plano atual</div>'
-          : `<a href="mailto:anderson@mockapi.dev?subject=Upgrade ${p.label}&body=Olá Anderson, gostaria de assinar o plano ${p.label} (R$${price}/mês). Meu login: ${user ? user.login : '?'}" class="btn btn-primary" style="background:${color};color:#000;text-align:center">Assinar ${p.label} →</a>`
-        }
-      </div>`;
-    }).join('');
-
+    const plan = user ? user.plan : 'free';
+    const limits = getPlanLimits(plan);
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(`<!DOCTYPE html>
 <html lang="pt-BR">
@@ -377,23 +336,17 @@ async function handleRequest(req, res) {
 <title>Upgrade — MockAPI Inspector</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--green:#00FF87;--bg:#0a0a0a;--bg2:#111;--border:#1a1a1a;--blue:#4dabf7}
+:root{--green:#00FF87;--bg:#0a0a0a;--bg2:#111;--border:#1a1a1a;--blue:#4dabf7;--gold:#FFD700}
 body{background:var(--bg);color:#e0e0e0;font-family:'Inter',system-ui,sans-serif;min-height:100vh;display:flex;flex-direction:column}
 header{border-bottom:1px solid var(--border);padding:0 32px;height:56px;display:flex;align-items:center;justify-content:space-between;background:var(--bg2)}
 .logo{font-size:15px;font-weight:700;color:#fff}.logo span{color:var(--green)}
 a{color:var(--green);text-decoration:none}
-nav{display:flex;gap:20px;align-items:center}
-nav a{font-size:13px;color:#666}nav a:hover{color:#fff}
-.container{max-width:1040px;margin:0 auto;padding:60px 32px;flex:1;text-align:center}
+.container{max-width:960px;margin:0 auto;padding:60px 32px;flex:1;text-align:center}
 h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
-.sub{font-size:16px;color:#666;margin-bottom:8px}
-.usage-bar-wrap{max-width:400px;margin:0 auto 40px;text-align:left}
-.usage-row{display:flex;justify-content:space-between;font-size:12px;color:#555;margin-bottom:3px}
-.usage-bar{background:#1a1a1a;border-radius:4px;height:4px;margin-bottom:10px}
-.usage-fill{height:4px;border-radius:4px;transition:width .5s}
-.plans{display:grid;grid-template-columns:repeat(${cols},1fr);gap:20px;text-align:left}
+.sub{font-size:16px;color:#666;margin-bottom:48px}
+.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;text-align:left}
 @media(max-width:700px){.plans{grid-template-columns:1fr}}
-.plan{background:var(--bg2);border:1px solid #1e1e1e;border-radius:16px;padding:28px;position:relative}
+.plan{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:28px;position:relative}
 .plan.popular{border-color:var(--green)}
 .plan-badge{position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--green);color:#000;font-size:11px;font-weight:700;padding:3px 12px;border-radius:100px}
 .plan-name{font-size:13px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
@@ -405,29 +358,66 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
 .plan-features li{font-size:13px;color:#888;padding:6px 0;border-bottom:1px solid #111;display:flex;align-items:center;gap:8px}
 .plan-features li:last-child{border-bottom:none}
 .plan-features .check{color:var(--green);font-size:14px}
-.btn{display:block;text-align:center;padding:12px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:all .2s;text-decoration:none}
+.btn{display:block;text-align:center;padding:12px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:all .2s}
+.btn-primary{background:var(--green);color:#000}
+.btn-primary:hover{background:#00e87a}
 .btn-outline{border:1px solid #333;color:#888}
+.btn-outline:hover{border-color:#555;color:#fff}
+.current{font-size:12px;color:#444;text-align:center;margin-top:8px}
 </style>
 </head>
 <body>
 <header>
   <div class="logo">⚡ <span>MockAPI</span></div>
-  <nav>
-    <a href="/docs">Documentação</a>
-    <a href="/" style="color:#666">← Dashboard</a>
-  </nav>
+  <a href="/" style="color:#666;font-size:13px">← Voltar ao Dashboard</a>
 </header>
 <div class="container">
   <h1>Faça Upgrade do seu Plano</h1>
-  <p class="sub">Você está no plano <strong style="color:var(--green)">${userPlan.toUpperCase()}</strong> — usando ${userEpUsed} endpoints e ${userReqUsed.toLocaleString()} req hoje</p>
-  <div class="usage-bar-wrap">
-    <div class="usage-row"><span>Endpoints</span><span>${userEpUsed} / ${userLimits.endpoints >= 999999 ? '∞' : userLimits.endpoints}</span></div>
-    <div class="usage-bar"><div class="usage-fill" style="width:${Math.min((userEpUsed/(userLimits.endpoints||1))*100,100)}%;background:${userEpUsed >= (userLimits.endpoints||3) ? '#ff4444' : '#00FF87'}"></div></div>
-    <div class="usage-row"><span>Requisições hoje</span><span>${userReqUsed.toLocaleString()} / ${userLimits.reqPerDay >= 999999999 ? '∞' : userLimits.reqPerDay.toLocaleString()}</span></div>
-    <div class="usage-bar"><div class="usage-fill" style="width:${Math.min((userReqUsed/(userLimits.reqPerDay||1000))*100,100)}%;background:${userReqUsed >= (userLimits.reqPerDay||1000) ? '#ff4444' : '#00FF87'}"></div></div>
+  <p class="sub">Você está no plano <strong style="color:var(--green)">${plan.toUpperCase()}</strong> — ${limits.endpoints} endpoints, ${limits.reqPerDay.toLocaleString()} req/dia</p>
+
+  <div class="plans">
+    <div class="plan">
+      <div class="plan-name">Free</div>
+      <div class="plan-price"><sup>R$</sup>0<span>/mês</span></div>
+      <div class="plan-desc">Para explorar e testar a ferramenta.</div>
+      <ul class="plan-features">
+        <li><span class="check">✓</span> 3 endpoints</li>
+        <li><span class="check">✓</span> 1.000 req/dia</li>
+        <li><span class="check">✓</span> CRUD + Faker + OpenAPI</li>
+        <li><span class="check">✓</span> Histórico 200 requisições</li>
+      </ul>
+      <div class="btn btn-outline" style="cursor:default">Plano atual</div>
+    </div>
+
+    <div class="plan popular">
+      <div class="plan-badge">MAIS POPULAR</div>
+      <div class="plan-name">Pro</div>
+      <div class="plan-price"><sup>R$</sup>59<span>/mês</span></div>
+      <div class="plan-desc">Para devs e times pequenos que precisam de mais.</div>
+      <ul class="plan-features">
+        <li><span class="check">✓</span> <strong>50 endpoints</strong></li>
+        <li><span class="check">✓</span> <strong>100.000 req/dia</strong></li>
+        <li><span class="check">✓</span> Tudo do Free</li>
+        <li><span class="check">✓</span> Suporte prioritário</li>
+      </ul>
+      <a href="mailto:anderson@mockapi.dev?subject=Upgrade Pro" class="btn btn-primary">Assinar Pro →</a>
+    </div>
+
+    <div class="plan">
+      <div class="plan-name">Team</div>
+      <div class="plan-price"><sup>R$</sup>199<span>/mês</span></div>
+      <div class="plan-desc">Para equipes e projetos de maior escala.</div>
+      <ul class="plan-features">
+        <li><span class="check">✓</span> <strong>200 endpoints</strong></li>
+        <li><span class="check">✓</span> <strong>1.000.000 req/dia</strong></li>
+        <li><span class="check">✓</span> Tudo do Pro</li>
+        <li><span class="check">✓</span> SLA e onboarding</li>
+      </ul>
+      <a href="mailto:anderson@mockapi.dev?subject=Upgrade Team" class="btn btn-primary" style="background:#4dabf7;color:#000">Assinar Team →</a>
+    </div>
   </div>
-  <div class="plans">${plansHtml}</div>
-  <p style="margin-top:40px;font-size:13px;color:#333">Pagamento via Pix ou cartão. Ativação manual em até 24h. Dúvidas: <a href="mailto:anderson@mockapi.dev">anderson@mockapi.dev</a></p>
+
+  <p style="margin-top:40px;font-size:13px;color:#333">Pagamento via Pix ou cartão. Ativação manual em até 24h. Dúvidas: anderson@mockapi.dev</p>
 </div>
 </body></html>`);
     return;
@@ -607,18 +597,6 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
     if (action === 'promote') db.setAdmin(userId, true);
     if (action === 'demote')  db.setAdmin(userId, false);
     return json(res, { ok: true, action, userId });
-  }
-  // Set user plan directly
-  const setPlanMatch = pathname.match(/^\/api\/admin\/users\/([^/]+)\/set_plan$/);
-  if (method === 'POST' && setPlanMatch) {
-    if (!requireAdmin(req, res)) return;
-    const userId = setPlanMatch[1];
-    const body = await readBody(req);
-    let data = {}; try { data = JSON.parse(body); } catch(_) {}
-    if (!data.plan) return json(res, { error: 'plan required' }, 400);
-    db.upgradeUserPlan(userId, data.plan);
-    const user = db.getUserById(userId);
-    return json(res, { ok: true, userId, plan: user?.plan });
   }
 
   // ── ENDPOINTS (with auth filter)
@@ -1328,39 +1306,23 @@ function filterUsers() {
 function renderUsers(users) {
   const tbody = document.getElementById('users-tbody');
   if (users.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="empty">Nenhum usuário</td></tr>'; return; }
-  const planColors = {free:'#00FF87',pro:'#4dabf7',team:'#FFD700',enterprise:'#da77f2'};
   tbody.innerHTML = users.map(u => {
     const badges = [];
     if (u.isAdmin) badges.push('<span class="badge admin">👑 admin</span>');
     if (u.banned)  badges.push('<span class="badge banned">🚫 banido</span>');
-    const planColor = planColors[u.plan] || '#00FF87';
-    const planSelect =
-      '<select onchange="setPlan(\''+u.id+'\',this)" style="background:#111;border:1px solid '+planColor+'44;color:'+planColor+';border-radius:5px;padding:3px 6px;font-size:11px;font-weight:700;cursor:pointer;outline:none">'
-      + ['free','pro','team','enterprise'].map(p =>
-          '<option value="'+p+'"'+(u.plan===p?' selected':'')+'>'+p.toUpperCase()+'</option>'
-        ).join('')
-      + '</select>';
+    else           badges.push('<span class="badge ' + u.plan + '">' + u.plan + '</span>');
     const actions = [];
-    if (!u.isAdmin) actions.push('<button class="action-btn success" data-id="'+u.id+'" data-action="promote" onclick="actBtn(this)" title="Tornar admin">👑</button>');
-    else            actions.push('<button class="action-btn" data-id="'+u.id+'" data-action="demote" onclick="actBtn(this)" title="Remover admin">−👑</button>');
-    if (!u.banned)  actions.push('<button class="action-btn danger" data-id="'+u.id+'" data-action="ban" onclick="actBtn(this)" title="Banir">🚫</button>');
-    else            actions.push('<button class="action-btn" data-id="'+u.id+'" data-action="unban" onclick="actBtn(this)" title="Desbanir">✓</button>');
+    if (!u.isAdmin) actions.push('<button class="action-btn success" data-id="'+u.id+'" data-action="promote" onclick="actBtn(this)">Promover</button>');
+    else            actions.push('<button class="action-btn" data-id="'+u.id+'" data-action="demote" onclick="actBtn(this)">- Admin</button>');
+    if (!u.banned)  actions.push('<button class="action-btn danger" data-id="'+u.id+'" data-action="ban" onclick="actBtn(this)">Banir</button>');
+    else            actions.push('<button class="action-btn" data-id="'+u.id+'" data-action="unban" onclick="actBtn(this)">Desbanir</button>');
     return '<tr>'
-      + '<td style="max-width:200px">'
-        + '<div style="display:flex;align-items:center;gap:8px;min-width:0">'
-        + '<img src="'+(u.avatar||'')+'" class="avatar" style="flex-shrink:0"/>'
-        + '<div style="min-width:0">'
-        + '<div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+u.login+'</div>'
-        + (u.name ? '<div style="font-size:11px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+u.name+'</div>' : '')
-        + '</div>'
-        + (badges.length ? '<div style="display:flex;gap:4px;flex-shrink:0">'+badges.join('')+'</div>' : '')
-        + '</div>'
-      + '</td>'
-      + '<td>'+planSelect+'</td>'
-      + '<td style="text-align:right;font-family:monospace;font-size:12px">'+u.epCount+'</td>'
-      + '<td style="text-align:right;font-family:monospace;font-size:12px">'+u.reqCount+'</td>'
-      + '<td style="color:var(--text3);font-size:11px">'+(u.createdAt||'').slice(0,10)+'</td>'
-      + '<td style="white-space:nowrap">'+actions.join(' ')+'</td>'
+      + '<td><img src="'+(u.avatar||'')+'" class="avatar"/><strong>'+u.login+'</strong> '+(u.name?'<span style="color:var(--text3);font-size:12px">'+u.name+'</span>':'')+' '+badges.join('')+'</td>'
+      + '<td>'+u.plan+'</td>'
+      + '<td>'+u.epCount+'</td>'
+      + '<td>'+u.reqCount+'</td>'
+      + '<td style="color:var(--text3);font-size:12px">'+(u.createdAt||'').slice(0,10)+'</td>'
+      + '<td>'+actions.join('')+'</td>'
       + '</tr>';
   }).join('');
 }
@@ -1421,22 +1383,6 @@ async function act(id, action) {
   loadUsers();
 }
 function actBtn(btn) { act(btn.dataset.id, btn.dataset.action); }
-
-async function setPlan(id, select) {
-  const plan = select.value;
-  const planColors = {free:'#00FF87',pro:'#4dabf7',team:'#FFD700',enterprise:'#da77f2'};
-  select.style.borderColor = (planColors[plan]||'#00FF87') + '44';
-  select.style.color = planColors[plan]||'#00FF87';
-  const res = await fetch('/api/admin/users/' + id + '/set_plan', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ plan })
-  });
-  const data = await res.json();
-  // Flash green border to confirm
-  select.style.boxShadow = '0 0 0 2px ' + (planColors[plan]||'#00FF87') + '66';
-  setTimeout(() => { select.style.boxShadow = ''; }, 1200);
-}
 
 loadStats();
 setInterval(loadStats, 30000);
@@ -2039,10 +1985,6 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
         <span class="mono" style="font-size:10px;color:var(--text3);flex:1" id="ws-status">Conectando...</span>
       </div>
       <div id="plan-usage" style="width:100%;padding-top:4px;border-top:1px solid #1a1a1a"></div>
-      <div style="display:flex;gap:12px;width:100%;padding-top:4px;border-top:1px solid #131313">
-        <a href="/docs" target="_blank" style="font-size:10px;color:#333;text-decoration:none;flex:1;text-align:center;padding:4px 0;border-radius:4px;border:1px solid #1a1a1a;transition:all .2s" onmouseover="this.style.color='#00FF87';this.style.borderColor='#00FF8733'" onmouseout="this.style.color='#333';this.style.borderColor='#1a1a1a'">📄 Docs</a>
-        <a href="/upgrade" style="font-size:10px;color:#333;text-decoration:none;flex:1;text-align:center;padding:4px 0;border-radius:4px;border:1px solid #1a1a1a;transition:all .2s" id="upgrade-sidebar-link" onmouseover="this.style.color='#ff8c00';this.style.borderColor='#ff8c0033'" onmouseout="this.style.color='#333';this.style.borderColor='#1a1a1a'">⚡ Planos</a>
-      </div>
       ${userBarHtml}
     </div>
   </div>
@@ -2056,7 +1998,7 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
       </div>
       <div style="font-size:22px;font-weight:700;color:#fff">Selecione um Endpoint</div>
       <div style="font-size:14px;color:#555;max-width:320px">Escolha um endpoint ou crie um novo para começar a capturar requisições HTTP em tempo real.</div>
-      <button id="empty-cta-btn" class="btn-primary" style="padding:14px 32px;font-size:15px;flex:none;width:auto" onclick="emptyCtaClick()">+ Criar Primeiro Endpoint</button>
+      <button class="btn-primary" style="padding:14px 32px;font-size:15px;flex:none;width:auto" onclick="showCreateModal()">+ Criar Primeiro Endpoint</button>
     </div>
 
     <!-- Endpoint view (hidden initially) -->
@@ -2222,25 +2164,25 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 </div>
 
 <!-- URL TESTER (floating) -->
-<div id="url-tester" style="display:none;position:fixed;bottom:24px;left:220px;right:24px;max-width:680px;background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:14px 18px;z-index:500;box-shadow:0 8px 32px rgba(0,0,0,.6)">
+<div id="url-tester" style="display:none;position:fixed;bottom:24px;left:272px;background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:14px 18px;z-index:500;width:400px;box-shadow:0 8px 32px rgba(0,0,0,.6)">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
     <span style="font-size:11px;color:var(--text3);font-family:'Space Mono',monospace;letter-spacing:1px">TESTADOR DE URL</span>
-    <button onclick="document.getElementById('url-tester').style.display='none'" style="background:none;border:none;color:var(--text4);cursor:pointer;font-size:16px;padding:0 2px">✕</button>
+    <button onclick="document.getElementById('url-tester').style.display='none'" style="background:none;border:none;color:var(--text4)">✕</button>
   </div>
   <div style="font-size:10px;color:var(--text3);font-family:'Space Mono',monospace;margin-bottom:6px">CAMINHO ADICIONAL</div>
   <div class="url-builder-row" style="margin-bottom:8px">
-    <span class="url-base" id="tester-base" style="font-size:10px;padding:0 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;flex-shrink:0"></span>
-    <input class="url-input" id="tester-path" placeholder="/users/123" oninput="updateTesterUrl()" style="flex:1;min-width:0"/>
+    <span class="url-base" id="tester-base"></span>
+    <input class="url-input" id="tester-path" placeholder="/users/123" oninput="updateTesterUrl()"/>
   </div>
   <div style="font-size:10px;color:var(--text3);font-family:'Space Mono',monospace;margin-bottom:4px">URL COMPLETA</div>
-  <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;background:#0d0d0d;border-radius:6px;padding:6px 10px;border:1px solid #1a1a1a">
-    <code style="font-size:11px;color:var(--green);font-family:'Space Mono',monospace;word-break:break-all;flex:1;min-width:0" id="tester-full-url"></code>
-    <button class="url-copy" onclick="copyTesterUrl()" style="border:1px solid var(--border2);border-radius:6px;flex-shrink:0;padding:4px 10px;font-size:11px">Copiar</button>
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+    <code style="font-size:11px;color:var(--green);font-family:'Space Mono',monospace;word-break:break-all;flex:1" id="tester-full-url"></code>
+    <button class="url-copy" onclick="copyTesterUrl()" style="border:1px solid var(--border2);border-radius:6px;flex-shrink:0">Copiar</button>
   </div>
   <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
-    <button onclick="sendTestRequest('GET')" style="background:#00C8FF22;border:1px solid #00C8FF44;border-radius:6px;padding:7px;color:#00C8FF;font-size:11px;font-weight:700;font-family:'Space Mono',monospace;cursor:pointer">GET</button>
-    <button onclick="sendTestRequest('POST')" style="background:#00FF8722;border:1px solid #00FF8744;border-radius:6px;padding:7px;color:#00FF87;font-size:11px;font-weight:700;font-family:'Space Mono',monospace;cursor:pointer">POST</button>
-    <button onclick="sendTestRequest('DELETE')" style="background:#FF444422;border:1px solid #FF444444;border-radius:6px;padding:7px;color:#FF6B6B;font-size:11px;font-weight:700;font-family:'Space Mono',monospace;cursor:pointer">DELETE</button>
+    <button onclick="sendTestRequest('GET')" style="background:#00C8FF22;border:1px solid #00C8FF44;border-radius:6px;padding:7px;color:#00C8FF;font-size:11px;font-weight:700;font-family:'Space Mono',monospace">GET</button>
+    <button onclick="sendTestRequest('POST')" style="background:#00FF8722;border:1px solid #00FF8744;border-radius:6px;padding:7px;color:#00FF87;font-size:11px;font-weight:700;font-family:'Space Mono',monospace">POST</button>
+    <button onclick="sendTestRequest('DELETE')" style="background:#FF444422;border:1px solid #FF444444;border-radius:6px;padding:7px;color:#FF6B6B;font-size:11px;font-weight:700;font-family:'Space Mono',monospace">DELETE</button>
   </div>
 </div>
 
@@ -2664,11 +2606,6 @@ async function deleteEndpoint(id, e) {
   toast('Endpoint removido.', 'error');
 }
 
-function emptyCtaClick() {
-  if (window._atEpLimit) { window.location.href = '/upgrade'; }
-  else { showCreateModal(); }
-}
-
 function updatePlanUsage() {
   fetch('/api/me').then(r => r.json()).then(d => {
     if (!d.loggedIn || !d.user || !d.user.limits) return;
@@ -2699,34 +2636,15 @@ function updatePlanUsage() {
       + '<div style="background:#1a1a1a;border-radius:4px;height:3px">'
       + '<div style="background:' + reqColor + ';height:3px;width:' + Math.min(reqPct,100) + '%;border-radius:4px;transition:width .5s"></div>'
       + '</div></div>';
-    // Update state flag
-    window._atEpLimit = epPct >= 100;
-    // Update sidebar "Novo Endpoint" button
+    // Update "Novo Endpoint" button text
     const newEpBtn = document.querySelector('.new-ep-btn');
     if (newEpBtn) {
       if (epPct >= 100) {
-        newEpBtn.style.cssText += ';background:linear-gradient(135deg,#ff8c00,#ff6600);border-color:#ff8c00;color:#000';
-        newEpBtn.onclick = () => window.location.href = '/upgrade';
-        newEpBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Upgrade ⚡';
+        newEpBtn.style.background = 'linear-gradient(135deg,#ff8c00,#ff6600)';
+        newEpBtn.innerHTML = newEpBtn.innerHTML.replace(/Novo Endpoint|Upgrade/, 'Upgrade ⚡');
       } else {
-        newEpBtn.style.cssText = '';
-        newEpBtn.onclick = () => showCreateModal();
-        newEpBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Novo Endpoint';
-      }
-    }
-    // Update empty-state CTA button
-    const ctaBtn = document.getElementById('empty-cta-btn');
-    if (ctaBtn) {
-      if (epPct >= 100) {
-        ctaBtn.style.background = 'linear-gradient(135deg,#ff8c00,#ff6600)';
-        ctaBtn.style.color = '#000';
-        ctaBtn.style.boxShadow = '0 0 20px #ff8c0066';
-        ctaBtn.textContent = '⚡ Fazer Upgrade';
-      } else {
-        ctaBtn.style.background = '';
-        ctaBtn.style.color = '';
-        ctaBtn.style.boxShadow = '';
-        ctaBtn.textContent = '+ Criar Primeiro Endpoint';
+        newEpBtn.style.background = '';
+        newEpBtn.innerHTML = newEpBtn.innerHTML.replace(/Upgrade ⚡|Upgrade/, 'Novo Endpoint');
       }
     }
   }).catch(() => {});
@@ -3205,11 +3123,13 @@ function renderCrudTables() {
 
     const MC = {GET:'#00C8FF',POST:'#00FF87',PATCH:'#FF8C42',PUT:'#FFD700',DELETE:'#FF4444'};
     const miniRow = (m, url, ck) => \`<div onclick="copyCurlIdx(\${idx},'\${ck}')"
-      style="background:#111;border-radius:5px;padding:6px 10px;display:flex;align-items:center;gap:8px;cursor:pointer;transition:background .15s;min-width:0;overflow:hidden"
-      onmouseover="this.style.background='#1a1a1a'" onmouseout="this.style.background='#111'" title="\${esc(url)}">
-      <span style="color:\${MC[m]||'#aaa'};width:54px;flex-shrink:0;font-weight:700;font-size:10px;letter-spacing:.04em">\${m}</span>
-      <span style="color:#444;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;flex:1;min-width:0">\${esc(url)}</span>
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#2a2a2a" stroke-width="2" style="flex-shrink:0"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      style="background:#111;border-radius:5px;padding:7px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;transition:background .15s"
+      onmouseover="this.style.background='#1a1a1a'" onmouseout="this.style.background='#111'" title="Clique para copiar cURL">
+      <div style="display:flex;align-items:center;gap:10px;min-width:0">
+        <span style="color:\${MC[m]||'#aaa'};min-width:60px;font-weight:700;font-size:11px">\${m}</span>
+        <span style="color:#555;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px">\${esc(url)}</span>
+      </div>
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="2" style="flex-shrink:0"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
     </div>\`;
 
     return \`<div style="background:#0D0D0D;border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:12px;animation:slideIn .2s ease">
@@ -3268,7 +3188,7 @@ function renderCrudTables() {
           \${miniRow('DELETE', base+'/{id}', 'del')}
         </div>
       </div>
-      <div style="display:flex;flex-direction:column;gap:3px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">
         \${miniRow('GET',    base,         'get')}
         \${miniRow('POST',   base,         'post')}
         \${miniRow('PATCH',  base+'/{id}', 'patch')}
