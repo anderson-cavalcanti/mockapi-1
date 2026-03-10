@@ -45,30 +45,6 @@ const SESSION_SECRET       = process.env.SESSION_SECRET       || 'dev_secret_cha
 const ADMIN_GITHUB_ID      = process.env.ADMIN_GITHUB_ID      || '';
 const AUTH_ENABLED         = !!GITHUB_CLIENT_ID;
 
-// ── PLAN LIMITS ───────────────────────────────────────────────────────────────
-const PLAN_LIMITS = {
-  free:       { endpoints: 3,   reqPerDay: 1_000,   label: 'Free'       },
-  pro:        { endpoints: 50,  reqPerDay: 100_000,  label: 'Pro'        },
-  team:       { endpoints: 200, reqPerDay: 1_000_000, label: 'Team'      },
-  enterprise: { endpoints: Infinity, reqPerDay: Infinity, label: 'Enterprise' },
-};
-function getPlanLimits(plan) { return PLAN_LIMITS[plan] || PLAN_LIMITS.free; }
-function checkEndpointLimit(user) {
-  if (!user) return null; // no auth = no limit
-  const limits = getPlanLimits(user.plan);
-  const count = db.countUserEndpoints(user.id);
-  if (count >= limits.endpoints) return { error: 'endpoint_limit', plan: user.plan, limit: limits.endpoints, count };
-  return null;
-}
-function checkDailyLimit(user) {
-  if (!user) return null;
-  const limits = getPlanLimits(user.plan);
-  if (limits.reqPerDay === Infinity) return null;
-  const count = db.countUserReqsToday(user.id);
-  if (count >= limits.reqPerDay) return { error: 'daily_limit', plan: user.plan, limit: limits.reqPerDay, count };
-  return null;
-}
-
 function parseCookies(req) {
   const list = {};
   const rc = req.headers.cookie;
@@ -319,107 +295,6 @@ async function handleRequest(req, res) {
     return;
   }
 
-  // ── UPGRADE PAGE
-  if (method === 'GET' && pathname === '/upgrade') {
-    const user = getSessionUser(req);
-    const plan = user ? user.plan : 'free';
-    const limits = getPlanLimits(plan);
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(`<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Upgrade — MockAPI Inspector</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{--green:#00FF87;--bg:#0a0a0a;--bg2:#111;--border:#1a1a1a;--blue:#4dabf7;--gold:#FFD700}
-body{background:var(--bg);color:#e0e0e0;font-family:'Inter',system-ui,sans-serif;min-height:100vh;display:flex;flex-direction:column}
-header{border-bottom:1px solid var(--border);padding:0 32px;height:56px;display:flex;align-items:center;justify-content:space-between;background:var(--bg2)}
-.logo{font-size:15px;font-weight:700;color:#fff}.logo span{color:var(--green)}
-a{color:var(--green);text-decoration:none}
-.container{max-width:960px;margin:0 auto;padding:60px 32px;flex:1;text-align:center}
-h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
-.sub{font-size:16px;color:#666;margin-bottom:48px}
-.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;text-align:left}
-@media(max-width:700px){.plans{grid-template-columns:1fr}}
-.plan{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:28px;position:relative}
-.plan.popular{border-color:var(--green)}
-.plan-badge{position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--green);color:#000;font-size:11px;font-weight:700;padding:3px 12px;border-radius:100px}
-.plan-name{font-size:13px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
-.plan-price{font-size:40px;font-weight:800;color:#fff;margin-bottom:4px}
-.plan-price sup{font-size:18px;vertical-align:top;margin-top:8px;color:#888}
-.plan-price span{font-size:14px;color:#555;font-weight:400}
-.plan-desc{font-size:13px;color:#555;margin-bottom:20px;line-height:1.5}
-.plan-features{list-style:none;margin-bottom:24px}
-.plan-features li{font-size:13px;color:#888;padding:6px 0;border-bottom:1px solid #111;display:flex;align-items:center;gap:8px}
-.plan-features li:last-child{border-bottom:none}
-.plan-features .check{color:var(--green);font-size:14px}
-.btn{display:block;text-align:center;padding:12px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:all .2s}
-.btn-primary{background:var(--green);color:#000}
-.btn-primary:hover{background:#00e87a}
-.btn-outline{border:1px solid #333;color:#888}
-.btn-outline:hover{border-color:#555;color:#fff}
-.current{font-size:12px;color:#444;text-align:center;margin-top:8px}
-</style>
-</head>
-<body>
-<header>
-  <div class="logo">⚡ <span>MockAPI</span></div>
-  <a href="/" style="color:#666;font-size:13px">← Voltar ao Dashboard</a>
-</header>
-<div class="container">
-  <h1>Faça Upgrade do seu Plano</h1>
-  <p class="sub">Você está no plano <strong style="color:var(--green)">${plan.toUpperCase()}</strong> — ${limits.endpoints} endpoints, ${limits.reqPerDay.toLocaleString()} req/dia</p>
-
-  <div class="plans">
-    <div class="plan">
-      <div class="plan-name">Free</div>
-      <div class="plan-price"><sup>R$</sup>0<span>/mês</span></div>
-      <div class="plan-desc">Para explorar e testar a ferramenta.</div>
-      <ul class="plan-features">
-        <li><span class="check">✓</span> 3 endpoints</li>
-        <li><span class="check">✓</span> 1.000 req/dia</li>
-        <li><span class="check">✓</span> CRUD + Faker + OpenAPI</li>
-        <li><span class="check">✓</span> Histórico 200 requisições</li>
-      </ul>
-      <div class="btn btn-outline" style="cursor:default">Plano atual</div>
-    </div>
-
-    <div class="plan popular">
-      <div class="plan-badge">MAIS POPULAR</div>
-      <div class="plan-name">Pro</div>
-      <div class="plan-price"><sup>R$</sup>59<span>/mês</span></div>
-      <div class="plan-desc">Para devs e times pequenos que precisam de mais.</div>
-      <ul class="plan-features">
-        <li><span class="check">✓</span> <strong>50 endpoints</strong></li>
-        <li><span class="check">✓</span> <strong>100.000 req/dia</strong></li>
-        <li><span class="check">✓</span> Tudo do Free</li>
-        <li><span class="check">✓</span> Suporte prioritário</li>
-      </ul>
-      <a href="mailto:anderson@mockapi.dev?subject=Upgrade Pro" class="btn btn-primary">Assinar Pro →</a>
-    </div>
-
-    <div class="plan">
-      <div class="plan-name">Team</div>
-      <div class="plan-price"><sup>R$</sup>199<span>/mês</span></div>
-      <div class="plan-desc">Para equipes e projetos de maior escala.</div>
-      <ul class="plan-features">
-        <li><span class="check">✓</span> <strong>200 endpoints</strong></li>
-        <li><span class="check">✓</span> <strong>1.000.000 req/dia</strong></li>
-        <li><span class="check">✓</span> Tudo do Pro</li>
-        <li><span class="check">✓</span> SLA e onboarding</li>
-      </ul>
-      <a href="mailto:anderson@mockapi.dev?subject=Upgrade Team" class="btn btn-primary" style="background:#4dabf7;color:#000">Assinar Team →</a>
-    </div>
-  </div>
-
-  <p style="margin-top:40px;font-size:13px;color:#333">Pagamento via Pix ou cartão. Ativação manual em até 24h. Dúvidas: anderson@mockapi.dev</p>
-</div>
-</body></html>`);
-    return;
-  }
-
   // ── HEALTH CHECK
   if (method === 'GET' && pathname === '/health') {
     return json(res, { ok: true, version: '2.0.0', uptime: Math.floor(process.uptime()), ts: new Date().toISOString() });
@@ -530,16 +405,9 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
   if (method === 'GET' && pathname === '/api/me') {
     const user = getSessionUser(req);
     if (!user) return json(res, { loggedIn: false, authEnabled: AUTH_ENABLED });
-    const limits = getPlanLimits(user.plan);
-    const epCount  = db.countUserEndpoints(user.id);
-    const reqToday = db.countUserReqsToday(user.id);
     return json(res, { loggedIn: true, authEnabled: AUTH_ENABLED, user: {
       id: user.id, login: user.login, name: user.name,
-      avatar: user.avatar, plan: user.plan, isAdmin: user.isAdmin,
-      limits: {
-        endpoints:    { used: epCount,  max: limits.endpoints,  pct: limits.endpoints === Infinity ? 0 : Math.round(epCount/limits.endpoints*100) },
-        reqPerDay:    { used: reqToday, max: limits.reqPerDay,  pct: limits.reqPerDay === Infinity  ? 0 : Math.round(reqToday/limits.reqPerDay*100) },
-      }
+      avatar: user.avatar, plan: user.plan, isAdmin: user.isAdmin
     }});
   }
 
@@ -589,9 +457,6 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
   if (method === 'POST' && pathname === '/api/endpoints') {
     const user = AUTH_ENABLED ? requireAuth(req, res) : null;
     if (AUTH_ENABLED && !user) return;
-    // Check endpoint limit
-    const epLimitErr = checkEndpointLimit(user);
-    if (epLimitErr) return json(res, epLimitErr, 403);
     const body = await readBody(req);
     let data = {}; try { data = JSON.parse(body); } catch(_) {}
     const id = genId();
@@ -781,23 +646,6 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
     if (!ep) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Endpoint not found', id: epId })); return;
-    }
-
-    // Check daily request limit for endpoint owner
-    if (ep.userId) {
-      const owner = db.getUserById(ep.userId);
-      if (owner) {
-        const limitErr = checkDailyLimit(owner);
-        if (limitErr) {
-          res.writeHead(429, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            error: 'Daily request limit reached',
-            plan: limitErr.plan,
-            limit: limitErr.limit,
-            upgrade_url: '/upgrade'
-          })); return;
-        }
-      }
     }
 
     const body = await readBody(req);
@@ -1870,7 +1718,6 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(1.3)}}
 @keyframes slideIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
 @keyframes slideInLeft{from{opacity:0;transform:translateX(-12px)}to{opacity:1;transform:translateX(0)}}
-@keyframes slideDown{from{transform:translateY(-100%);opacity:0}to{transform:translateY(0);opacity:1}}
 @keyframes newReq{0%{background:#00FF8718}100%{background:transparent}}
 @keyframes fadeIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
 @keyframes toastIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
@@ -1908,7 +1755,6 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
         <div class="status-dot" id="ws-dot" style="background:#FF4444;box-shadow:0 0 6px #FF4444"></div>
         <span class="mono" style="font-size:10px;color:var(--text3);flex:1" id="ws-status">Conectando...</span>
       </div>
-      <div id="plan-usage" style="width:100%;padding-top:4px;border-top:1px solid #1a1a1a"></div>
       ${userBarHtml}
     </div>
   </div>
@@ -2460,24 +2306,13 @@ async function createEndpoint() {
   const name = document.getElementById('ep-name-input').value.trim();
   if (!name) { toast('Digite um nome para o endpoint.', 'error'); return; }
   try {
-    const res = await fetch('/api/endpoints', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name,
-        path: document.getElementById('ep-path-input').value.trim(),
-        corsEnabled: state.corsOn,
-        rateLimit: parseInt(document.getElementById('ep-ratelimit-input').value) || 100,
-      })
+    const ep = await api('POST', '/api/endpoints', {
+      name,
+      path: document.getElementById('ep-path-input').value.trim(),
+      corsEnabled: state.corsOn,
+      rateLimit: parseInt(document.getElementById('ep-ratelimit-input').value) || 100,
     });
-    if (res.status === 403) {
-      const err = await res.json();
-      hideCreateModal();
-      showUpgradeBanner(err.limit);
-      return;
-    }
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const ep = await res.json();
+    // Update state immediately (WS may also fire, that's fine)
     state.endpoints[ep.id] = ep;
     state.requests[ep.id] = [];
     state.rules[ep.id] = [];
@@ -2490,49 +2325,10 @@ async function createEndpoint() {
   }
 }
 
-function showUpgradeBanner(limit) {
-  const existing = document.getElementById('upgrade-banner');
-  if (existing) existing.remove();
-  const banner = document.createElement('div');
-  banner.id = 'upgrade-banner';
-  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:linear-gradient(135deg,#1a0a00,#2a1200);border-bottom:1px solid #ff8c00;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;animation:slideDown .3s ease';
-  banner.innerHTML =
-    '<div style="display:flex;align-items:center;gap:12px">'
-    + '<span style="font-size:20px">⚡</span>'
-    + '<div><strong style="color:#ff8c00;font-size:14px">Limite do plano Free atingido</strong>'
-    + '<div style="font-size:12px;color:#888;margin-top:2px">Você usou ' + limit + '/' + limit + ' endpoints. Faça upgrade para criar mais.</div></div>'
-    + '</div>'
-    + '<div style="display:flex;gap:8px;flex-shrink:0">'
-    + '<a href="/upgrade" style="background:#ff8c00;color:#000;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:700;text-decoration:none">Fazer Upgrade →</a>'
-    + '<button onclick="document.getElementById(\'upgrade-banner\').remove()" style="background:none;border:1px solid #333;color:#666;padding:8px 12px;border-radius:6px;font-size:13px;cursor:pointer">✕</button>'
-    + '</div>';
-  document.body.prepend(banner);
-}
-
 async function deleteEndpoint(id, e) {
   e.stopPropagation();
   await api('DELETE', '/api/endpoints/' + id);
   toast('Endpoint removido.', 'error');
-}
-
-function updatePlanUsage() {
-  fetch('/api/me').then(r => r.json()).then(d => {
-    if (!d.loggedIn || !d.user || !d.user.limits) return;
-    const lim = d.user.limits;
-    const epPct = lim.endpoints.pct;
-    const el = document.getElementById('plan-usage');
-    if (!el) return;
-    const barColor = epPct >= 100 ? '#ff4444' : epPct >= 80 ? '#ff8c00' : '#00FF87';
-    const maxLabel = lim.endpoints.max >= 1e300 ? '\u221e' : lim.endpoints.max;
-    el.innerHTML =
-      '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'
-      + '<span style="font-size:10px;color:#444;text-transform:uppercase;letter-spacing:.06em">' + d.user.plan.toUpperCase() + '</span>'
-      + '<span style="font-size:10px;color:#555">' + lim.endpoints.used + '/' + maxLabel + ' ep</span>'
-      + '</div>'
-      + '<div style="background:#1a1a1a;border-radius:4px;height:3px;overflow:hidden">'
-      + '<div style="background:' + barColor + ';height:100%;width:' + Math.min(epPct,100) + '%;border-radius:4px;transition:width .5s"></div>'
-      + '</div>';
-  }).catch(() => {});
 }
 
 function renderEndpointList() {
@@ -3402,7 +3198,6 @@ async function init() {
     return;
   }
   connectWS();
-  updatePlanUsage();
 }
 
 init();

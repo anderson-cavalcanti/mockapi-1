@@ -202,15 +202,6 @@ module.exports = {
   deleteEndpoint(id) { db.prepare(`DELETE FROM endpoints WHERE id=?`).run(id); },
   incrementCount(id) { db.prepare(`UPDATE endpoints SET req_count=req_count+1 WHERE id=?`).run(id); },
   countEndpoints()   { return db.prepare(`SELECT COUNT(*) as n FROM endpoints`).get()?.n||0; },
-  countUserEndpoints(userId) { return db.prepare(`SELECT COUNT(*) as n FROM endpoints WHERE user_id=?`).get(userId)?.n||0; },
-  countUserReqsToday(userId) {
-    return db.prepare(
-      `SELECT COUNT(*) as n FROM requests r
-       JOIN endpoints e ON r.endpoint_id=e.id
-       WHERE e.user_id=? AND date(r.ts)=date('now')`
-    ).get(userId)?.n||0;
-  },
-  upgradeUserPlan(userId, plan) { db.prepare(`UPDATE users SET plan=? WHERE id=?`).run(plan, userId); },
 
   // REQUESTS
   getRequests(epId) {
