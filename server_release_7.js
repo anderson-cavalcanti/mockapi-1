@@ -92,18 +92,9 @@ function getSessionUser(req) {
   return db.getUserById(session.userId);
 }
 
-function getTokenUser(req) {
-  const auth = req.headers['authorization'] || '';
-  const match = auth.match(/^Bearer\s+(.+)$/i);
-  if (!match) return null;
-  const row = db.getApiToken(match[1]);
-  if (!row) return null;
-  return db.getUserById(row.user_id);
-}
-
 function requireAuth(req, res) {
-  const user = getSessionUser(req) || getTokenUser(req);
-  if (!user) { res.writeHead(401, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Unauthorized'})); return null; }
+  const user = getSessionUser(req);
+  if (!user) { res.writeHead(302, { Location: '/login' }); res.end(); return null; }
   if (user.banned) { res.writeHead(403, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Account banned'})); return null; }
   return user;
 }
@@ -116,15 +107,6 @@ function requireAdmin(req, res) {
 }
 
 setInterval(() => db.cleanExpiredSessions(), 60 * 60 * 1000);
-
-// ── KEEP-ALIVE (Render free tier sleeps after 15min) ─────────────────────────
-if (process.env.RENDER_EXTERNAL_URL) {
-  const pingUrl = process.env.RENDER_EXTERNAL_URL + '/health';
-  setInterval(() => {
-    require('https').get(pingUrl, () => {}).on('error', () => {});
-  }, 10 * 60 * 1000); // every 10 min
-  console.log('[keep-alive] Pinging', pingUrl, 'every 10min');
-}
 
 // ── WEBSOCKET (RFC 6455) ──────────────────────────────────────────────────────
 const wsClients = new Set();
@@ -2081,9 +2063,8 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
         <span class="mono" style="font-size:10px;color:var(--text3);flex:1" id="ws-status">Conectando...</span>
       </div>
       <div id="plan-usage" style="width:100%;padding-top:4px;border-top:1px solid #1a1a1a"></div>
-      <div style="display:flex;gap:6px;width:100%;padding-top:4px;border-top:1px solid #131313">
+      <div style="display:flex;gap:12px;width:100%;padding-top:4px;border-top:1px solid #131313">
         <a href="/docs" target="_blank" style="font-size:10px;color:#333;text-decoration:none;flex:1;text-align:center;padding:4px 0;border-radius:4px;border:1px solid #1a1a1a;transition:all .2s" onmouseover="this.style.color='#00FF87';this.style.borderColor='#00FF8733'" onmouseout="this.style.color='#333';this.style.borderColor='#1a1a1a'">📄 Docs</a>
-        <button onclick="showTokenModal()" style="font-size:10px;color:#333;background:none;cursor:pointer;flex:1;text-align:center;padding:4px 0;border-radius:4px;border:1px solid #1a1a1a;transition:all .2s" onmouseover="this.style.color='#7DD3FC';this.style.borderColor='#7DD3FC33'" onmouseout="this.style.color='#333';this.style.borderColor='#1a1a1a'">🔑 Tokens</button>
         <a href="/upgrade" style="font-size:10px;color:#333;text-decoration:none;flex:1;text-align:center;padding:4px 0;border-radius:4px;border:1px solid #1a1a1a;transition:all .2s" id="upgrade-sidebar-link" onmouseover="this.style.color='#ff8c00';this.style.borderColor='#ff8c0033'" onmouseout="this.style.color='#333';this.style.borderColor='#1a1a1a'">⚡ Planos</a>
       </div>
       ${userBarHtml}
@@ -2284,37 +2265,6 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
     <button onclick="sendTestRequest('GET')" style="background:#00C8FF22;border:1px solid #00C8FF44;border-radius:6px;padding:7px;color:#00C8FF;font-size:11px;font-weight:700;font-family:'Space Mono',monospace;cursor:pointer">GET</button>
     <button onclick="sendTestRequest('POST')" style="background:#00FF8722;border:1px solid #00FF8744;border-radius:6px;padding:7px;color:#00FF87;font-size:11px;font-weight:700;font-family:'Space Mono',monospace;cursor:pointer">POST</button>
     <button onclick="sendTestRequest('DELETE')" style="background:#FF444422;border:1px solid #FF444444;border-radius:6px;padding:7px;color:#FF6B6B;font-size:11px;font-weight:700;font-family:'Space Mono',monospace;cursor:pointer">DELETE</button>
-  </div>
-</div>
-
-<!-- API TOKENS MODAL -->
-<div id="token-modal" style="display:none" class="modal-overlay">
-  <div class="modal" style="max-width:520px">
-    <div class="modal-row">
-      <h2 class="modal-title" style="margin:0">🔑 API Tokens</h2>
-      <button onclick="hideTokenModal()" style="background:none;border:none;color:var(--text3);cursor:pointer">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
-    <p style="font-size:12px;color:#555;margin-bottom:16px">Use tokens para autenticar o SDK ou chamadas diretas à API sem precisar de login.</p>
-
-    <div style="display:flex;gap:8px;margin-bottom:16px">
-      <input id="token-name-input" class="form-input" placeholder="Nome do token (ex: CI/CD, projeto-x)" style="flex:1"/>
-      <button class="btn-primary" style="flex:none;width:auto;padding:0 16px;font-size:13px" onclick="createToken()">Gerar</button>
-    </div>
-
-    <div id="token-new-reveal" style="display:none;background:#0a1a0a;border:1px solid #00FF8733;border-radius:8px;padding:12px;margin-bottom:16px">
-      <div style="font-size:10px;color:#00FF87;letter-spacing:1px;margin-bottom:6px;font-family:monospace">✓ TOKEN GERADO — COPIE AGORA, NÃO SERÁ MOSTRADO NOVAMENTE</div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <code id="token-new-value" style="font-family:monospace;font-size:12px;color:#00FF87;flex:1;word-break:break-all"></code>
-        <button onclick="copyNewToken()" style="background:#00FF8722;border:1px solid #00FF8744;border-radius:6px;padding:6px 12px;color:#00FF87;font-size:11px;cursor:pointer;flex-shrink:0">Copiar</button>
-      </div>
-    </div>
-
-    <div style="font-size:11px;color:#333;margin-bottom:8px;text-transform:uppercase;letter-spacing:.06em">Tokens ativos</div>
-    <div id="token-list" style="display:flex;flex-direction:column;gap:6px;max-height:240px;overflow-y:auto">
-      <div style="color:#333;font-size:12px;padding:16px;text-align:center">Carregando...</div>
-    </div>
   </div>
 </div>
 
@@ -2736,72 +2686,6 @@ async function deleteEndpoint(id, e) {
   e.stopPropagation();
   await api('DELETE', '/api/endpoints/' + id);
   toast('Endpoint removido.', 'error');
-}
-
-// ── API TOKEN MODAL ────────────────────────────────────────────────────────────
-async function showTokenModal() {
-  document.getElementById('token-modal').style.display = 'flex';
-  document.getElementById('token-new-reveal').style.display = 'none';
-  document.getElementById('token-name-input').value = '';
-  await loadTokenList();
-}
-
-function hideTokenModal() {
-  document.getElementById('token-modal').style.display = 'none';
-}
-
-async function loadTokenList() {
-  const list = document.getElementById('token-list');
-  list.innerHTML = '<div style="color:#333;font-size:12px;padding:16px;text-align:center">Carregando...</div>';
-  try {
-    const tokens = await api('GET', '/api/tokens');
-    if (!tokens || tokens.length === 0) {
-      list.innerHTML = '<div style="color:#333;font-size:12px;padding:16px;text-align:center">Nenhum token ainda. Gere um acima.</div>';
-      return;
-    }
-    list.innerHTML = tokens.map(t => {
-      const lastUsed = t.last_used ? new Date(t.last_used).toLocaleDateString('pt-BR') : 'nunca';
-      const created  = (t.created_at||'').slice(0,10);
-      return '<div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:10px">'
-        + '<div style="flex:1;min-width:0">'
-        + '<div style="font-size:13px;color:#ccc;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(t.name) + '</div>'
-        + '<div style="font-size:10px;color:#444;font-family:monospace;margin-top:2px">' + t.token_preview + ' · criado ' + created + ' · usado ' + lastUsed + '</div>'
-        + '</div>'
-        + '<button data-tid="'+t.id+'" onclick="deleteToken(this)" style="background:none;border:1px solid #2a2a2a;color:#555;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer" onmouseover="this.style.color=\'#ff4444\';this.style.borderColor=\'#ff444433\'" onmouseout="this.style.color=\'#555\';this.style.borderColor=\'#2a2a2a\'">Revogar</button>'
-        + '</div>';
-    }).join('');
-  } catch(e) {
-    list.innerHTML = '<div style="color:#555;font-size:12px;padding:16px;text-align:center">Erro ao carregar tokens.</div>';
-  }
-}
-
-async function createToken() {
-  const nameInput = document.getElementById('token-name-input');
-  const name = nameInput.value.trim() || ('Token ' + new Date().toLocaleDateString('pt-BR'));
-  try {
-    const data = await api('POST', '/api/tokens', { name });
-    if (!data || !data.token) { toast('Erro ao gerar token', 'error'); return; }
-    document.getElementById('token-new-value').textContent = data.token;
-    document.getElementById('token-new-reveal').style.display = 'block';
-    nameInput.value = '';
-    await loadTokenList();
-    toast('Token gerado! Copie agora — não será exibido novamente.', 'success');
-  } catch(e) {
-    toast('Erro ao gerar token', 'error');
-  }
-}
-
-function copyNewToken() {
-  const val = document.getElementById('token-new-value').textContent;
-  navigator.clipboard.writeText(val).then(() => toast('Token copiado!', 'success'));
-}
-
-async function deleteToken(btn) {
-  const id = btn.dataset.tid;
-  if (!confirm('Revogar este token? Aplicações que o usam perderão acesso.')) return;
-  await api('DELETE', '/api/tokens/' + id);
-  toast('Token revogado.', 'error');
-  await loadTokenList();
 }
 
 function emptyCtaClick() {

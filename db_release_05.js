@@ -109,17 +109,6 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_requests_ep    ON requests(endpoint_id);
   CREATE INDEX IF NOT EXISTS idx_requests_ts    ON requests(ts);
   CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
-  CREATE TABLE IF NOT EXISTS api_tokens (
-    id          TEXT PRIMARY KEY,
-    user_id     TEXT NOT NULL,
-    name        TEXT NOT NULL,
-    token       TEXT UNIQUE NOT NULL,
-    last_used   TEXT,
-    created_at  TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-  );
-  CREATE INDEX IF NOT EXISTS idx_api_tokens_token ON api_tokens(token);
-  CREATE INDEX IF NOT EXISTS idx_api_tokens_user  ON api_tokens(user_id);
   CREATE TABLE IF NOT EXISTS plan_config (
     plan        TEXT PRIMARY KEY,
     ep_limit    INTEGER NOT NULL,
@@ -338,24 +327,6 @@ module.exports = {
       usersByPlan:    db.prepare(`SELECT plan,COUNT(*) as n FROM users GROUP BY plan`).all(),
       totalRules:     db.prepare(`SELECT COUNT(*) as n FROM rules`).get()?.n||0,
     };
-  },
-
-  // ── API TOKENS ────────────────────────────────────────────────────────────
-  createApiToken(userId, name, token) {
-    const id = require('crypto').randomBytes(6).toString('hex').toUpperCase();
-    db.prepare(`INSERT INTO api_tokens (id,user_id,name,token) VALUES (?,?,?,?)`).run(id, userId, name, token);
-    return db.prepare(`SELECT * FROM api_tokens WHERE id=?`).get(id);
-  },
-  getApiToken(token) {
-    const row = db.prepare(`SELECT * FROM api_tokens WHERE token=?`).get(token);
-    if (row) db.prepare(`UPDATE api_tokens SET last_used=datetime('now') WHERE token=?`).run(token);
-    return row;
-  },
-  listApiTokens(userId) {
-    return db.prepare(`SELECT id,name,substr(token,1,8)||'...' as token_preview,last_used,created_at FROM api_tokens WHERE user_id=? ORDER BY created_at DESC`).all(userId);
-  },
-  deleteApiToken(id, userId) {
-    db.prepare(`DELETE FROM api_tokens WHERE id=? AND user_id=?`).run(id, userId);
   },
 
   raw: db,
