@@ -2493,19 +2493,34 @@ async function createEndpoint() {
 function showUpgradeBanner(limit) {
   const existing = document.getElementById('upgrade-banner');
   if (existing) existing.remove();
+
   const banner = document.createElement('div');
   banner.id = 'upgrade-banner';
   banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:linear-gradient(135deg,#1a0a00,#2a1200);border-bottom:1px solid #ff8c00;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;animation:slideDown .3s ease';
-  banner.innerHTML =
-    '<div style="display:flex;align-items:center;gap:12px">'
-    + '<span style="font-size:20px">⚡</span>'
+
+  const left = document.createElement('div');
+  left.style.cssText = 'display:flex;align-items:center;gap:12px';
+  left.innerHTML = '<span style="font-size:20px">⚡</span>'
     + '<div><strong style="color:#ff8c00;font-size:14px">Limite do plano Free atingido</strong>'
-    + '<div style="font-size:12px;color:#888;margin-top:2px">Você usou ' + limit + '/' + limit + ' endpoints. Faça upgrade para criar mais.</div></div>'
-    + '</div>'
-    + '<div style="display:flex;gap:8px;flex-shrink:0">'
-    + '<a href="/upgrade" style="background:#ff8c00;color:#000;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:700;text-decoration:none">Fazer Upgrade →</a>'
-    + '<button onclick="document.getElementById(\'upgrade-banner\').remove()" style="background:none;border:1px solid #333;color:#666;padding:8px 12px;border-radius:6px;font-size:13px;cursor:pointer">✕</button>'
-    + '</div>';
+    + '<div style="font-size:12px;color:#888;margin-top:2px">Você usou ' + limit + '/' + limit + ' endpoints. Faça upgrade para criar mais.</div></div>';
+
+  const right = document.createElement('div');
+  right.style.cssText = 'display:flex;gap:8px;flex-shrink:0';
+
+  const upgradeLink = document.createElement('a');
+  upgradeLink.href = '/upgrade';
+  upgradeLink.style.cssText = 'background:#ff8c00;color:#000;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:700;text-decoration:none';
+  upgradeLink.textContent = 'Fazer Upgrade →';
+
+  const closeBtn = document.createElement('button');
+  closeBtn.style.cssText = 'background:none;border:1px solid #333;color:#666;padding:8px 12px;border-radius:6px;font-size:13px;cursor:pointer';
+  closeBtn.textContent = '✕';
+  closeBtn.addEventListener('click', function() { banner.remove(); });
+
+  right.appendChild(upgradeLink);
+  right.appendChild(closeBtn);
+  banner.appendChild(left);
+  banner.appendChild(right);
   document.body.prepend(banner);
 }
 
