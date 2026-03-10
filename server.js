@@ -1350,7 +1350,7 @@ function renderUsers(users) {
     if (u.banned)  badges.push('<span class="badge banned">🚫 banido</span>');
     const planColor = planColors[u.plan] || '#00FF87';
     const planSelect =
-      '<select onchange="setPlan(\''+u.id+'\',this)" style="background:#111;border:1px solid '+planColor+'44;color:'+planColor+';border-radius:5px;padding:3px 6px;font-size:11px;font-weight:700;cursor:pointer;outline:none">'
+      '<select data-uid="'+u.id+'" onchange="setPlanFromSelect(this)" style="background:#111;border:1px solid '+planColor+'44;color:'+planColor+';border-radius:5px;padding:3px 6px;font-size:11px;font-weight:700;cursor:pointer;outline:none">'
       + ['free','pro','team','enterprise'].map(p =>
           '<option value="'+p+'"'+(u.plan===p?' selected':'')+'>'+p.toUpperCase()+'</option>'
         ).join('')
@@ -1444,6 +1444,7 @@ async function act(id, action) {
   loadUsers();
 }
 function actBtn(btn) { act(btn.dataset.id, btn.dataset.action); }
+function setPlanFromSelect(sel) { setPlan(sel.dataset.uid, sel); }
 
 async function setPlan(id, select) {
   const plan = select.value;
