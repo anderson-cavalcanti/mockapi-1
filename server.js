@@ -1247,77 +1247,92 @@ function showPage(name, el) {
 }
 
 async function loadStats() {
-  const d = await fetch('/api/admin/stats').then(r => r.json());
-  document.getElementById('s-users').textContent  = d.totalUsers.toLocaleString();
-  document.getElementById('s-ep').textContent     = d.totalEndpoints.toLocaleString();
-  document.getElementById('s-req').textContent    = d.totalRequests.toLocaleString();
-  document.getElementById('s-rules').textContent  = (d.totalRules||0).toLocaleString();
-  document.getElementById('s-users-sub').textContent = '+' + d.newUsersWeek + ' esta semana';
-  document.getElementById('s-req-sub').textContent   = d.reqToday.toLocaleString() + ' hoje';
+  try {
+    const r = await fetch('/api/admin/stats');
+    if (r.status === 401 || r.status === 403) { window.location.href = '/login'; return; }
+    if (!r.ok) { console.error('Stats fetch failed:', r.status); return; }
+    const d = await r.json();
+    if (d.error) { console.error('Stats error:', d.error); return; }
+    document.getElementById('s-users').textContent  = (d.totalUsers||0).toLocaleString();
+    document.getElementById('s-ep').textContent     = (d.totalEndpoints||0).toLocaleString();
+    document.getElementById('s-req').textContent    = (d.totalRequests||0).toLocaleString();
+    document.getElementById('s-rules').textContent  = (d.totalRules||0).toLocaleString();
+    document.getElementById('s-users-sub').textContent = '+' + (d.newUsersWeek||0) + ' esta semana';
+    document.getElementById('s-req-sub').textContent   = (d.reqToday||0).toLocaleString() + ' hoje';
 
-  // SVG-style bar chart
-  const bars   = document.getElementById('chart-bars');
-  const labels = document.getElementById('chart-labels');
-  const tip    = document.getElementById('tooltip');
-  bars.innerHTML = ''; labels.innerHTML = '';
-  const max = Math.max(...d.chart.map(c => c.n), 1);
-  d.chart.forEach((c, i) => {
-    const bar = document.createElement('div');
-    bar.className = 'bar';
-    bar.style.height = Math.max((c.n / max) * 110, 2) + 'px';
-    bar.addEventListener('mousemove', e => {
-      tip.style.opacity = '1';
-      tip.style.left = (e.offsetX + bar.offsetLeft - 40) + 'px';
-      tip.style.top  = (bar.parentElement.offsetTop - 36) + 'px';
-      tip.textContent = c.day.slice(5) + ': ' + c.n + ' req';
+    // SVG-style bar chart
+    const bars   = document.getElementById('chart-bars');
+    const labels = document.getElementById('chart-labels');
+    const tip    = document.getElementById('tooltip');
+    bars.innerHTML = ''; labels.innerHTML = '';
+    const chart = d.chart || [];
+    const max = Math.max(...chart.map(c => c.n), 1);
+    chart.forEach((c, i) => {
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      bar.style.height = Math.max((c.n / max) * 110, 2) + 'px';
+      bar.addEventListener('mousemove', e => {
+        tip.style.opacity = '1';
+        tip.style.left = (e.offsetX + bar.offsetLeft - 40) + 'px';
+        tip.style.top  = (bar.parentElement.offsetTop - 36) + 'px';
+        tip.textContent = c.day.slice(5) + ': ' + c.n + ' req';
+      });
+      bar.addEventListener('mouseleave', () => tip.style.opacity = '0');
+      bars.appendChild(bar);
     });
-    bar.addEventListener('mouseleave', () => tip.style.opacity = '0');
-    bars.appendChild(bar);
-  });
-  // Show 4 date labels
-  if (d.chart.length > 0) {
-    const idxs = [0, Math.floor(d.chart.length/3), Math.floor(2*d.chart.length/3), d.chart.length-1];
-    idxs.forEach(i => {
-      const sp = document.createElement('span');
-      sp.textContent = (d.chart[i]||{day:''}).day.slice(5);
-      labels.appendChild(sp);
-    });
-  }
+    if (chart.length > 0) {
+      const idxs = [0, Math.floor(chart.length/3), Math.floor(2*chart.length/3), chart.length-1];
+      idxs.forEach(i => {
+        const sp = document.createElement('span');
+        sp.textContent = (chart[i]||{day:''}).day.slice(5);
+        labels.appendChild(sp);
+      });
+    }
 
-  // Top endpoints
-  const tbody = document.getElementById('top-ep-body');
-  tbody.innerHTML = d.topEndpoints.length === 0
-    ? '<tr><td colspan="3" class="empty">Nenhum endpoint</td></tr>'
-    : d.topEndpoints.map(e =>
-        '<tr><td><code style="color:var(--green);font-size:11px">' + e.id + '</code><span style="color:#666;margin-left:6px">' + e.name + '</span></td>'
-        + '<td style="color:var(--text2)">' + (e.owner||'—') + '</td>'
-        + '<td style="text-align:right;font-variant-numeric:tabular-nums">' + e.req_count + '</td></tr>'
-      ).join('');
+    // Top endpoints
+    const tbody = document.getElementById('top-ep-body');
+    const topEps = d.topEndpoints || [];
+    tbody.innerHTML = topEps.length === 0
+      ? '<tr><td colspan="3" class="empty">Nenhum endpoint</td></tr>'
+      : topEps.map(e =>
+          '<tr><td><code style="color:var(--green);font-size:11px">' + e.id + '</code><span style="color:#666;margin-left:6px">' + e.name + '</span></td>'
+          + '<td style="color:var(--text2)">' + (e.owner||'—') + '</td>'
+          + '<td style="text-align:right;font-variant-numeric:tabular-nums">' + e.req_count + '</td></tr>'
+        ).join('');
 
-  // Plans distribution
-  const pc = document.getElementById('plans-content');
-  if (d.usersByPlan && d.usersByPlan.length > 0) {
-    const total = d.usersByPlan.reduce((s,p) => s + p.n, 0) || 1;
-    const colors = {free:'var(--green)',pro:'var(--blue)',enterprise:'var(--gold)'};
-    pc.innerHTML = d.usersByPlan.map(p =>
-      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'
-      + '<div style="display:flex;align-items:center;gap:8px"><div style="width:10px;height:10px;border-radius:2px;background:'+(colors[p.plan]||'#666')+'"></div>'
-      + '<span style="font-size:13px">' + p.plan + '</span></div>'
-      + '<span style="font-size:13px;color:var(--text2)">' + p.n + ' (' + Math.round(p.n/total*100) + '%)</span></div>'
-    ).join('')
-    + '<div class="plan-bar">' + d.usersByPlan.map(p =>
-      '<div style="flex:' + p.n + ';background:' + (colors[p.plan]||'#666') + ';opacity:.7"></div>'
-    ).join('') + '</div>';
-  } else {
-    pc.innerHTML = '<div class="empty">Nenhum usuário ainda</div>';
+    // Plans distribution
+    const pc = document.getElementById('plans-content');
+    const byPlan = d.usersByPlan || [];
+    if (byPlan.length > 0) {
+      const total = byPlan.reduce((s,p) => s + p.n, 0) || 1;
+      const colors = {free:'var(--green)',pro:'var(--blue)',team:'var(--gold)',enterprise:'#da77f2'};
+      pc.innerHTML = byPlan.map(p =>
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'
+        + '<div style="display:flex;align-items:center;gap:8px"><div style="width:10px;height:10px;border-radius:2px;background:'+(colors[p.plan]||'#666')+'"></div>'
+        + '<span style="font-size:13px">' + p.plan + '</span></div>'
+        + '<span style="font-size:13px;color:var(--text2)">' + p.n + ' (' + Math.round(p.n/total*100) + '%)</span></div>'
+      ).join('')
+      + '<div class="plan-bar">' + byPlan.map(p =>
+        '<div style="flex:' + p.n + ';background:' + (colors[p.plan]||'#666') + ';opacity:.7"></div>'
+      ).join('') + '</div>';
+    } else {
+      pc.innerHTML = '<div class="empty">Nenhum usuário ainda</div>';
+    }
+  } catch(e) {
+    console.error('[loadStats] Error:', e.message);
   }
 }
 
 async function loadUsers() {
-  const users = await fetch('/api/admin/users').then(r => r.json());
-  allUsers = users;
-  document.getElementById('users-count').textContent = '(' + users.length + ')';
-  renderUsers(users);
+  try {
+    const r = await fetch('/api/admin/users');
+    if (r.status === 401 || r.status === 403) { window.location.href = '/login'; return; }
+    const users = await r.json();
+    if (!Array.isArray(users)) return;
+    allUsers = users;
+    document.getElementById('users-count').textContent = '(' + users.length + ')';
+    renderUsers(users);
+  } catch(e) { console.error('[loadUsers]', e.message); }
 }
 
 function filterUsers() {
@@ -1366,43 +1381,51 @@ function renderUsers(users) {
 }
 
 async function loadAllEndpoints() {
-  const eps = await fetch('/api/admin/endpoints').then(r => r.json());
-  const tbody = document.getElementById('ep-tbody');
-  if (!eps.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty">Nenhum endpoint</td></tr>'; return; }
-  tbody.innerHTML = eps.map(e =>
-    '<tr>'
-    + '<td><code style="color:var(--green);font-size:11px">'+e.id+'</code></td>'
-    + '<td>'+e.name+'</td>'
-    + '<td style="color:var(--text2)">'+(e.userId||'—')+'</td>'
-    + '<td style="text-align:right">'+e.requestCount+'</td>'
-    + '<td style="color:var(--text3);font-size:12px">'+(e.createdAt||'').slice(0,10)+'</td>'
-    + '</tr>'
-  ).join('');
+  try {
+    const r = await fetch('/api/admin/endpoints');
+    if (!r.ok) return;
+    const eps = await r.json();
+    const tbody = document.getElementById('ep-tbody');
+    if (!eps.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty">Nenhum endpoint</td></tr>'; return; }
+    tbody.innerHTML = eps.map(e =>
+      '<tr>'
+      + '<td><code style="color:var(--green);font-size:11px">'+e.id+'</code></td>'
+      + '<td>'+e.name+'</td>'
+      + '<td style="color:var(--text2)">'+(e.userId||'—')+'</td>'
+      + '<td style="text-align:right">'+e.requestCount+'</td>'
+      + '<td style="color:var(--text3);font-size:12px">'+(e.createdAt||'').slice(0,10)+'</td>'
+      + '</tr>'
+    ).join('');
+  } catch(e) { console.error('[loadAllEndpoints]', e.message); }
 }
 
 async function loadPlans() {
-  const plans = await fetch('/api/admin/plans').then(r => r.json());
-  const grid = document.getElementById('plans-grid');
-  const colors = {free:'var(--green)',pro:'var(--blue)',team:'var(--gold)',enterprise:'#da77f2'};
-  grid.innerHTML = plans.map(p => {
-    const color = colors[p.plan] || 'var(--green)';
-    const inf = 999999;
-    return '<div class="card" style="border-top:3px solid '+color+'">'
-      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'
-      + '<strong style="font-size:15px;color:#fff">'+p.label+'</strong>'
-      + '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--text2)">'
-      + '<span>Visível</span>'
-      + '<input type="checkbox" data-plan="'+p.plan+'" data-field="enabled" onchange="patchPlan(this)" '+(p.enabled?'checked':'')+'>'
-      + '</label></div>'
-      + '<div style="display:grid;gap:10px">'
-      + '<label style="font-size:12px;color:var(--text3)">Endpoints</label>'
-      + '<input class="search-input" style="width:100%" type="number" value="'+(p.ep_limit>=inf?'':p.ep_limit)+'" placeholder="999999 = ilimitado" data-plan="'+p.plan+'" data-field="ep_limit" onchange="patchPlan(this)">'
-      + '<label style="font-size:12px;color:var(--text3)">Req/dia</label>'
-      + '<input class="search-input" style="width:100%" type="number" value="'+(p.req_per_day>=999999999?'':p.req_per_day)+'" placeholder="999999999 = ilimitado" data-plan="'+p.plan+'" data-field="req_per_day" onchange="patchPlan(this)">'
-      + '<label style="font-size:12px;color:var(--text3)">Preço (R$)</label>'
-      + '<input class="search-input" style="width:100%" type="number" value="'+p.price_brl+'" data-plan="'+p.plan+'" data-field="price_brl" onchange="patchPlan(this)">'
-      + '</div></div>';
-  }).join('');
+  try {
+    const r = await fetch('/api/admin/plans');
+    if (!r.ok) return;
+    const plans = await r.json();
+    const grid = document.getElementById('plans-grid');
+    const colors = {free:'var(--green)',pro:'var(--blue)',team:'var(--gold)',enterprise:'#da77f2'};
+    grid.innerHTML = plans.map(p => {
+      const color = colors[p.plan] || 'var(--green)';
+      const inf = 999999;
+      return '<div class="card" style="border-top:3px solid '+color+'">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'
+        + '<strong style="font-size:15px;color:#fff">'+p.label+'</strong>'
+        + '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--text2)">'
+        + '<span>Visível</span>'
+        + '<input type="checkbox" data-plan="'+p.plan+'" data-field="enabled" onchange="patchPlan(this)" '+(p.enabled?'checked':'')+'>'
+        + '</label></div>'
+        + '<div style="display:grid;gap:10px">'
+        + '<label style="font-size:12px;color:var(--text3)">Endpoints</label>'
+        + '<input class="search-input" style="width:100%" type="number" value="'+(p.ep_limit>=inf?'':p.ep_limit)+'" placeholder="999999 = ilimitado" data-plan="'+p.plan+'" data-field="ep_limit" onchange="patchPlan(this)">'
+        + '<label style="font-size:12px;color:var(--text3)">Req/dia</label>'
+        + '<input class="search-input" style="width:100%" type="number" value="'+(p.req_per_day>=999999999?'':p.req_per_day)+'" placeholder="999999999 = ilimitado" data-plan="'+p.plan+'" data-field="req_per_day" onchange="patchPlan(this)">'
+        + '<label style="font-size:12px;color:var(--text3)">Preço (R$)</label>'
+        + '<input class="search-input" style="width:100%" type="number" value="'+p.price_brl+'" data-plan="'+p.plan+'" data-field="price_brl" onchange="patchPlan(this)">'
+        + '</div></div>';
+    }).join('');
+  } catch(e) { console.error('[loadPlans]', e.message); }
 }
 
 async function patchPlan(input) {
