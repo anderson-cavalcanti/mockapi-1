@@ -30,9 +30,9 @@ process.emit = function(name, data) {
   return origEmit.apply(process, arguments);
 };
 
-const db     = require('./db.js');
-const faker  = require('./faker.js');
-const { parseOpenAPI } = require('./openapi.js');
+const db     = require('../db.js');
+const faker  = require('../faker.js');
+const { parseOpenAPI } = require('../openapi.js');
 
 function genId(len = 6) {
   return crypto.randomBytes(len).toString('hex').toUpperCase().slice(0, len);
@@ -45,17 +45,14 @@ const SESSION_SECRET       = process.env.SESSION_SECRET       || 'dev_secret_cha
 const ADMIN_GITHUB_ID      = process.env.ADMIN_GITHUB_ID      || '';
 const AUTH_ENABLED         = !!GITHUB_CLIENT_ID;
 
-// ── PLAN LIMITS (DB-driven, admin-configurable) ──────────────────────────────
-function getPlanLimits(plan) {
-  const cfg = db.getPlanConfig(plan || 'free');
-  return {
-    endpoints: cfg.ep_limit    >= 999999 ? Infinity : cfg.ep_limit,
-    reqPerDay: cfg.req_per_day >= 999999999 ? Infinity : cfg.req_per_day,
-    label: cfg.label,
-    enabled: !!cfg.enabled,
-    priceBrl: cfg.price_brl || 0,
-  };
-}
+// ── PLAN LIMITS ───────────────────────────────────────────────────────────────
+const PLAN_LIMITS = {
+  free:       { endpoints: 3,   reqPerDay: 1_000,   label: 'Free'       },
+  pro:        { endpoints: 50,  reqPerDay: 100_000,  label: 'Pro'        },
+  team:       { endpoints: 200, reqPerDay: 1_000_000, label: 'Team'      },
+  enterprise: { endpoints: Infinity, reqPerDay: Infinity, label: 'Enterprise' },
+};
+function getPlanLimits(plan) { return PLAN_LIMITS[plan] || PLAN_LIMITS.free; }
 function checkEndpointLimit(user) {
   if (!user) return null; // no auth = no limit
   const limits = getPlanLimits(user.plan);
@@ -566,21 +563,6 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
     return json(res, db.getAllUsers());
   }
 
-  // ── ADMIN API: Plan config
-  if (method === 'GET' && pathname === '/api/admin/plans') {
-    if (!requireAdmin(req, res)) return;
-    return json(res, db.getAllPlanConfigs());
-  }
-  const planPatchMatch = pathname.match(/^\/api\/admin\/plans\/([a-z]+)$/);
-  if (method === 'PATCH' && planPatchMatch) {
-    if (!requireAdmin(req, res)) return;
-    const plan = planPatchMatch[1];
-    const body = await readBody(req);
-    let data = {}; try { data = JSON.parse(body); } catch(_) {}
-    const updated = db.updatePlanConfig(plan, data);
-    return json(res, updated);
-  }
-
   // ── ADMIN API: All endpoints
   if (method === 'GET' && pathname === '/api/admin/endpoints') {
     if (!requireAdmin(req, res)) return;
@@ -607,11 +589,9 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
   if (method === 'POST' && pathname === '/api/endpoints') {
     const user = AUTH_ENABLED ? requireAuth(req, res) : null;
     if (AUTH_ENABLED && !user) return;
-    // Check endpoint limit (admins bypass)
-    if (!user?.isAdmin) {
-      const epLimitErr = checkEndpointLimit(user);
-      if (epLimitErr) return json(res, epLimitErr, 403);
-    }
+    // Check endpoint limit
+    const epLimitErr = checkEndpointLimit(user);
+    if (epLimitErr) return json(res, epLimitErr, 403);
     const body = await readBody(req);
     let data = {}; try { data = JSON.parse(body); } catch(_) {}
     const id = genId();
@@ -803,10 +783,10 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
       res.end(JSON.stringify({ error: 'Endpoint not found', id: epId })); return;
     }
 
-    // Check daily request limit for endpoint owner (admins bypass)
+    // Check daily request limit for endpoint owner
     if (ep.userId) {
       const owner = db.getUserById(ep.userId);
-      if (owner && !owner.isAdmin) {
+      if (owner) {
         const limitErr = checkDailyLimit(owner);
         if (limitErr) {
           res.writeHead(429, { 'Content-Type': 'application/json' });
@@ -825,25 +805,16 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
     const matchedRule = matchRule(rules, method, subPath);
 
     // Auto-register CRUD table on first POST to unknown path
-    // Uses full path up to the last segment (e.g. /users/123 -> /users, /v1/products -> /v1/products)
+    // Only auto-register if path has at least one segment (not root '/')
     if (!matchedRule && method === 'POST') {
       const cleanPath = subPath.replace(/\/$/, '');
       if (cleanPath && cleanPath !== '/') {
+        // Only register the first segment (e.g. /users/foo -> /users)
         const segments = cleanPath.split('/').filter(Boolean);
+        const tablePath = '/' + segments[0];
         const tables = db.getCrudTablesForEndpoint(epId);
-        // Check if this path (or a parent path) already has a table
-        const existingTable = tables.find(t => {
-          const tSegs = t.path.split('/').filter(Boolean);
-          // exact match or path starts with table path and next char is /
-          return cleanPath === t.path || cleanPath.startsWith(t.path + '/');
-        });
-        if (!existingTable) {
-          // If last segment looks like an ID (short alphanumeric), use parent path
-          const lastSeg = segments[segments.length - 1];
-          const looksLikeId = /^[0-9a-f-]{1,36}$/i.test(lastSeg) && segments.length > 1;
-          const tablePath = looksLikeId
-            ? '/' + segments.slice(0, -1).join('/')
-            : '/' + segments.join('/');
+        const hasTable = tables.some(t => t.path === tablePath || cleanPath.startsWith(t.path + '/'));
+        if (!hasTable) {
           const key = epId + ':' + tablePath;
           db.saveCrudTable(key, epId, tablePath, 'id');
           broadcast(epId, 'crud_table_updated', db.getCrudTable(key));
@@ -1107,7 +1078,6 @@ tbody tr:hover td{background:#0e0e0e}
       <a href="#" class="active" onclick="showPage('overview',this)">Overview</a>
       <a href="#" onclick="showPage('users',this)">Usuários</a>
       <a href="#" onclick="showPage('endpoints',this)">Endpoints</a>
-      <a href="#" onclick="showPage('plans',this)">⚙ Planos</a>
     </nav>
   </div>
   <div class="user-info">
@@ -1200,15 +1170,6 @@ tbody tr:hover td{background:#0e0e0e}
     </div>
   </div>
 
-  <!-- PLANS PAGE -->
-  <div class="page" id="page-plans">
-    <div style="margin-bottom:20px">
-      <h2 class="section-title" style="margin:0 0 4px">Configuração de Planos</h2>
-      <p style="font-size:12px;color:var(--text3)">Altere limites e visibilidade de cada plano. Alterações têm efeito imediato.</p>
-    </div>
-    <div id="plans-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px"></div>
-  </div>
-
 </div>
 
 <script>
@@ -1221,7 +1182,6 @@ function showPage(name, el) {
   el.classList.add('active');
   if (name === 'users' && allUsers.length === 0) loadUsers();
   if (name === 'endpoints') loadAllEndpoints();
-  if (name === 'plans') loadPlans();
 }
 
 async function loadStats() {
@@ -1340,42 +1300,6 @@ async function loadAllEndpoints() {
     + '<td style="color:var(--text3);font-size:12px">'+(e.createdAt||'').slice(0,10)+'</td>'
     + '</tr>'
   ).join('');
-}
-
-async function loadPlans() {
-  const plans = await fetch('/api/admin/plans').then(r => r.json());
-  const grid = document.getElementById('plans-grid');
-  const colors = {free:'var(--green)',pro:'var(--blue)',team:'var(--gold)',enterprise:'#da77f2'};
-  grid.innerHTML = plans.map(p => {
-    const color = colors[p.plan] || 'var(--green)';
-    const inf = 999999;
-    return '<div class="card" style="border-top:3px solid '+color+'">'
-      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'
-      + '<strong style="font-size:15px;color:#fff">'+p.label+'</strong>'
-      + '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--text2)">'
-      + '<span>Visível</span>'
-      + '<input type="checkbox" data-plan="'+p.plan+'" data-field="enabled" onchange="patchPlan(this)" '+(p.enabled?'checked':'')+'>'
-      + '</label></div>'
-      + '<div style="display:grid;gap:10px">'
-      + '<label style="font-size:12px;color:var(--text3)">Endpoints</label>'
-      + '<input class="search-input" style="width:100%" type="number" value="'+(p.ep_limit>=inf?'':p.ep_limit)+'" placeholder="999999 = ilimitado" data-plan="'+p.plan+'" data-field="ep_limit" onchange="patchPlan(this)">'
-      + '<label style="font-size:12px;color:var(--text3)">Req/dia</label>'
-      + '<input class="search-input" style="width:100%" type="number" value="'+(p.req_per_day>=999999999?'':p.req_per_day)+'" placeholder="999999999 = ilimitado" data-plan="'+p.plan+'" data-field="req_per_day" onchange="patchPlan(this)">'
-      + '<label style="font-size:12px;color:var(--text3)">Preço (R$)</label>'
-      + '<input class="search-input" style="width:100%" type="number" value="'+p.price_brl+'" data-plan="'+p.plan+'" data-field="price_brl" onchange="patchPlan(this)">'
-      + '</div></div>';
-  }).join('');
-}
-
-async function patchPlan(input) {
-  const plan  = input.dataset.plan;
-  const field = input.dataset.field;
-  const value = input.type === 'checkbox' ? (input.checked ? 1 : 0) : parseInt(input.value) || 0;
-  await fetch('/api/admin/plans/' + plan, {
-    method: 'PATCH',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ [field]: value })
-  });
 }
 
 async function act(id, action) {
@@ -1814,13 +1738,13 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 .new-ep-btn:hover{background:#00FF8733;border-style:solid}
 .ep-section-label{font-size:9px;color:var(--text4);font-family:'Space Mono',monospace;padding:8px 16px 4px;letter-spacing:1px}
 .ep-list{flex:1;overflow:auto;padding:0 8px}
-.ep-item{padding:10px 12px;border-radius:8px;cursor:pointer;border:1px solid transparent;margin-bottom:4px;transition:all .15s;animation:slideIn .2s ease;min-width:0}
+.ep-item{padding:10px 12px;border-radius:8px;cursor:pointer;border:1px solid transparent;margin-bottom:4px;transition:all .15s;animation:slideIn .2s ease}
 .ep-item:hover{background:var(--bg3)}
 .ep-item.active{background:var(--bg4);border-color:var(--border2)}
-.ep-name{font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;display:block}
-.ep-meta{display:flex;justify-content:space-between;align-items:center;margin-top:4px;gap:4px;min-width:0}
-.ep-id{font-size:10px;color:var(--text3);font-family:'Space Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
-.ep-count{font-size:11px;color:var(--text3);font-family:'Space Mono',monospace;white-space:nowrap;flex-shrink:0}
+.ep-name{font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ep-meta{display:flex;justify-content:space-between;align-items:center;margin-top:6px}
+.ep-id{font-size:10px;color:var(--text3);font-family:'Space Mono',monospace}
+.ep-count{font-size:11px;color:var(--text3);font-family:'Space Mono',monospace}
 .ep-del{background:none;border:none;color:var(--text4);padding:2px 4px;opacity:0;transition:all .2s}
 .ep-item:hover .ep-del{opacity:1}
 .ep-del:hover{color:var(--red)!important}
@@ -2609,44 +2533,20 @@ async function deleteEndpoint(id, e) {
 function updatePlanUsage() {
   fetch('/api/me').then(r => r.json()).then(d => {
     if (!d.loggedIn || !d.user || !d.user.limits) return;
-    const lim  = d.user.limits;
-    const plan = d.user.plan;
-    const epPct  = lim.endpoints.pct;
-    const reqPct = lim.reqPerDay.pct;
+    const lim = d.user.limits;
+    const epPct = lim.endpoints.pct;
     const el = document.getElementById('plan-usage');
     if (!el) return;
-    const epColor  = epPct  >= 100 ? '#ff4444' : epPct  >= 80 ? '#ff8c00' : '#00FF87';
-    const reqColor = reqPct >= 100 ? '#ff4444' : reqPct >= 80 ? '#ff8c00' : '#00FF87';
-    const epMax  = lim.endpoints.max >= 1e9 ? '\u221e' : lim.endpoints.max;
-    const reqMax = lim.reqPerDay.max >= 1e9 ? '\u221e' : lim.reqPerDay.max.toLocaleString();
+    const barColor = epPct >= 100 ? '#ff4444' : epPct >= 80 ? '#ff8c00' : '#00FF87';
+    const maxLabel = lim.endpoints.max >= 1e300 ? '\u221e' : lim.endpoints.max;
     el.innerHTML =
-      '<div style="margin-bottom:6px">'
-      + '<div style="display:flex;justify-content:space-between;margin-bottom:3px">'
-      + '<span style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.06em">' + plan.toUpperCase() + ' · Endpoints</span>'
-      + '<span style="font-size:10px;color:#555">' + lim.endpoints.used + '/' + epMax + '</span>'
+      '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'
+      + '<span style="font-size:10px;color:#444;text-transform:uppercase;letter-spacing:.06em">' + d.user.plan.toUpperCase() + '</span>'
+      + '<span style="font-size:10px;color:#555">' + lim.endpoints.used + '/' + maxLabel + ' ep</span>'
       + '</div>'
-      + '<div style="background:#1a1a1a;border-radius:4px;height:3px">'
-      + '<div style="background:' + epColor + ';height:3px;width:' + Math.min(epPct,100) + '%;border-radius:4px;transition:width .5s"></div>'
-      + '</div></div>'
-      + '<div>'
-      + '<div style="display:flex;justify-content:space-between;margin-bottom:3px">'
-      + '<span style="font-size:10px;color:#555">Requisições hoje</span>'
-      + '<span style="font-size:10px;color:#555">' + lim.reqPerDay.used.toLocaleString() + '/' + reqMax + '</span>'
-      + '</div>'
-      + '<div style="background:#1a1a1a;border-radius:4px;height:3px">'
-      + '<div style="background:' + reqColor + ';height:3px;width:' + Math.min(reqPct,100) + '%;border-radius:4px;transition:width .5s"></div>'
-      + '</div></div>';
-    // Update "Novo Endpoint" button text
-    const newEpBtn = document.querySelector('.new-ep-btn');
-    if (newEpBtn) {
-      if (epPct >= 100) {
-        newEpBtn.style.background = 'linear-gradient(135deg,#ff8c00,#ff6600)';
-        newEpBtn.innerHTML = newEpBtn.innerHTML.replace(/Novo Endpoint|Upgrade/, 'Upgrade ⚡');
-      } else {
-        newEpBtn.style.background = '';
-        newEpBtn.innerHTML = newEpBtn.innerHTML.replace(/Upgrade ⚡|Upgrade/, 'Novo Endpoint');
-      }
-    }
+      + '<div style="background:#1a1a1a;border-radius:4px;height:3px;overflow:hidden">'
+      + '<div style="background:' + barColor + ';height:100%;width:' + Math.min(epPct,100) + '%;border-radius:4px;transition:width .5s"></div>'
+      + '</div>';
   }).catch(() => {});
 }
 

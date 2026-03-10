@@ -30,9 +30,9 @@ process.emit = function(name, data) {
   return origEmit.apply(process, arguments);
 };
 
-const db     = require('./db.js');
-const faker  = require('./faker.js');
-const { parseOpenAPI } = require('./openapi.js');
+const db     = require('../db.js');
+const faker  = require('../faker.js');
+const { parseOpenAPI } = require('../openapi.js');
 
 function genId(len = 6) {
   return crypto.randomBytes(len).toString('hex').toUpperCase().slice(0, len);
@@ -256,44 +256,28 @@ async function handleRequest(req, res) {
   res.setHeader('Access-Control-Allow-Headers', '*');
   if (method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
-  // // ── DASHBOARD
-  // if (method === 'GET' && (pathname === '/' || pathname === '/dashboard')) {
-  //   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  //   try {
-  //     const dashUser = getSessionUser(req);
-  //     if (AUTH_ENABLED && !dashUser) { res.writeHead(302, { Location: '/login' }); res.end(); return; }
-  //     const html = getDashboardHTML(PORT, getBaseUrl(req), dashUser);
-  //     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  //     res.end(html);
-  //   } catch(e) {
-  //     console.error('[dashboard] Error:', e.message, e.stack);
-  //     res.writeHead(500, { 'Content-Type': 'text/plain' });
-  //     res.end('Dashboard error: ' + e.message);
-  //   }
-  //   return;
-  // }
-
-// ── DASHBOARD
+  // ── DASHBOARD
   if (method === 'GET' && (pathname === '/' || pathname === '/dashboard')) {
     try {
       const dashUser = getSessionUser(req);
 
-      // 1. Verificação de Autenticação (Redirecionamento)
-      if (AUTH_ENABLED && !dashUser) { 
-        res.writeHead(302, { Location: '/login' }); 
-        return res.end(); // O return aqui é essencial
+      // 1. Não logado — landing page (ou redirect se AUTH_ENABLED)
+      if (!dashUser) {
+        if (AUTH_ENABLED) {
+          // Mostra landing page pública em vez de redirecionar direto pro login
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          return res.end(getLandingHTML(getBaseUrl(req)));
+        }
+        // Auth desabilitado: entra direto
       }
 
-      // 2. Sucesso (HTML do Dashboard)
+      // 2. Logado — dashboard
       const html = getDashboardHTML(PORT, getBaseUrl(req), dashUser);
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(html);
 
     } catch(e) {
-      // 3. Erro (Falha interna)
       console.error('[dashboard] Error:', e.message, e.stack);
-      
-      // Importante: verificar se o cabeçalho já foi enviado antes de tentar enviar o 500
       if (!res.headersSent) {
         res.writeHead(500, { 'Content-Type': 'text/plain' });
         res.end('Dashboard error: ' + e.message);
@@ -301,7 +285,16 @@ async function handleRequest(req, res) {
     }
     return;
   }
-  
+
+  // ── DOCS
+  if (method === 'GET' && pathname === '/docs') {
+    try {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(getDocsHTML(getBaseUrl(req)));
+    } catch(e) { res.writeHead(500); res.end('Docs error: ' + e.message); }
+    return;
+  }
+
   // ── HEALTH CHECK
   if (method === 'GET' && pathname === '/health') {
     return json(res, { ok: true, version: '2.0.0', uptime: Math.floor(process.uptime()), ts: new Date().toISOString() });
@@ -436,6 +429,12 @@ async function handleRequest(req, res) {
   if (method === 'GET' && pathname === '/api/admin/users') {
     if (!requireAdmin(req, res)) return;
     return json(res, db.getAllUsers());
+  }
+
+  // ── ADMIN API: All endpoints
+  if (method === 'GET' && pathname === '/api/admin/endpoints') {
+    if (!requireAdmin(req, res)) return;
+    return json(res, db.getAllEndpoints());
   }
 
   // ── ADMIN API: Ban/unban user
@@ -839,180 +838,697 @@ function getLoginHTML(baseUrl) {
 
 // ── ADMIN PANEL ───────────────────────────────────────────────────────────────
 function getAdminHTML(baseUrl, adminUser) {
+  const av = adminUser.avatar || '';
+  const lg = adminUser.login  || '';
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Admin — MockAPI Inspector</title>
+<title>Admin — MockAPI</title>
 <style>
-  *{margin:0;padding:0;box-sizing:border-box}
-  body{background:#0a0a0a;color:#e0e0e0;font-family:'Inter',sans-serif;min-height:100vh}
-  header{background:#111;border-bottom:1px solid #1a1a1a;padding:16px 32px;display:flex;align-items:center;justify-content:space-between}
-  header h1{font-size:16px;font-weight:700;color:#fff}
-  header .right{display:flex;gap:12px;align-items:center;font-size:13px;color:#666}
-  header a{color:#00FF87;text-decoration:none;font-size:13px}
-  .container{max-width:1200px;margin:0 auto;padding:32px}
-  .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:32px}
-  .stat-card{background:#111;border:1px solid #1a1a1a;border-radius:12px;padding:24px}
-  .stat-card .label{font-size:12px;color:#555;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px}
-  .stat-card .value{font-size:36px;font-weight:700;color:#fff}
-  .stat-card .sub{font-size:12px;color:#444;margin-top:4px}
-  .stat-card.green .value{color:#00FF87}
-  .section{background:#111;border:1px solid #1a1a1a;border-radius:12px;padding:24px;margin-bottom:24px}
-  .section h2{font-size:14px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:20px}
-  table{width:100%;border-collapse:collapse;font-size:13px}
-  th{text-align:left;color:#444;font-weight:500;padding:8px 12px;border-bottom:1px solid #1a1a1a}
-  td{padding:10px 12px;border-bottom:1px solid #0f0f0f;vertical-align:middle}
-  tr:hover td{background:#0f0f0f}
-  .avatar{width:28px;height:28px;border-radius:50%;margin-right:8px;vertical-align:middle}
-  .badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
-  .badge.admin{background:#1a1a00;color:#FFD700;border:1px solid #333300}
-  .badge.free{background:#0a1a0a;color:#00FF87;border:1px solid #003300}
-  .badge.banned{background:#1a0a0a;color:#ff4444;border:1px solid #330000}
-  .btn{padding:4px 10px;border-radius:4px;border:1px solid #222;background:#0f0f0f;color:#888;font-size:11px;cursor:pointer;transition:all .15s}
-  .btn:hover{background:#1a1a1a;color:#fff}
-  .btn.danger{border-color:#330000;color:#ff4444}
-  .btn.danger:hover{background:#1a0a0a}
-  .btn.success{border-color:#003300;color:#00FF87}
-  .btn.success:hover{background:#0a1a0a}
-  #chart-wrap{height:120px;display:flex;align-items:flex-end;gap:3px;padding-top:10px}
-  .bar{background:#00FF8733;border-radius:2px 2px 0 0;flex:1;min-height:2px;transition:height .3s;cursor:default;position:relative}
-  .bar:hover{background:#00FF87}
-  .bar[title]{cursor:default}
-  .refresh-btn{float:right;font-size:11px;color:#444;cursor:pointer;background:none;border:none;padding:0}
-  .refresh-btn:hover{color:#00FF87}
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0a0a0a;--bg2:#111;--bg3:#161616;--border:#1e1e1e;--text:#e0e0e0;--text2:#888;--text3:#444;--green:#00FF87;--gold:#FFD700;--red:#ff4444;--blue:#4dabf7}
+body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;min-height:100vh;display:flex;flex-direction:column}
+a{color:var(--green);text-decoration:none}
+a:hover{text-decoration:underline}
+header{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 32px;height:56px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10}
+.logo{font-size:15px;font-weight:700;color:#fff;display:flex;align-items:center;gap:8px}
+.logo span{color:var(--green)}
+nav{display:flex;gap:4px}
+nav a{padding:6px 12px;border-radius:6px;font-size:13px;color:var(--text2);transition:all .15s}
+nav a:hover,nav a.active{background:var(--bg3);color:#fff;text-decoration:none}
+.user-info{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text2)}
+.user-info img{width:28px;height:28px;border-radius:50%}
+.container{max-width:1280px;margin:0 auto;padding:28px 32px;flex:1}
+.page{display:none}.page.active{display:block}
+h2.section-title{font-size:12px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:16px}
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px}
+@media(max-width:900px){.stats-grid{grid-template-columns:repeat(2,1fr)}}
+.stat{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 24px;position:relative;overflow:hidden}
+.stat::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--green);opacity:.3}
+.stat.highlight::before{opacity:1}
+.stat-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.stat-value{font-size:32px;font-weight:700;color:#fff;line-height:1;margin-bottom:4px}
+.stat.highlight .stat-value{color:var(--green)}
+.stat-sub{font-size:12px;color:var(--text3)}
+.stat-delta{font-size:11px;padding:2px 6px;border-radius:4px;margin-left:6px}
+.stat-delta.up{background:#0a2a0a;color:var(--green)}
+.stat-delta.down{background:#2a0a0a;color:var(--red)}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px;margin-bottom:20px}
+.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.card-title{font-size:13px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.06em}
+.refresh{background:none;border:none;color:var(--text3);font-size:12px;cursor:pointer;padding:4px 8px;border-radius:4px;transition:all .15s}
+.refresh:hover{background:var(--bg3);color:var(--green)}
+.chart-wrap{position:relative;height:140px}
+.chart-bars{display:flex;align-items:flex-end;gap:3px;height:120px;padding:0 4px}
+.bar{background:var(--green);opacity:.25;border-radius:3px 3px 0 0;flex:1;min-height:2px;transition:all .2s;cursor:pointer}
+.bar:hover{opacity:1}
+.chart-labels{display:flex;justify-content:space-between;margin-top:6px;padding:0 4px}
+.chart-labels span{font-size:10px;color:var(--text3)}
+.tooltip{position:absolute;background:#222;border:1px solid #333;border-radius:6px;padding:6px 10px;font-size:12px;color:#fff;pointer-events:none;opacity:0;transition:opacity .15s;white-space:nowrap;z-index:10}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{text-align:left;color:var(--text3);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.05em;padding:8px 12px;border-bottom:1px solid var(--border)}
+tbody td{padding:11px 12px;border-bottom:1px solid #0d0d0d;vertical-align:middle}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:#0e0e0e}
+.avatar{width:30px;height:30px;border-radius:50%;vertical-align:middle;margin-right:8px}
+.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:100px;font-size:11px;font-weight:600}
+.badge.admin{background:#2a2a00;color:var(--gold);border:1px solid #3a3a00}
+.badge.pro{background:#00132a;color:var(--blue);border:1px solid #003a6a}
+.badge.free{background:#001a0a;color:var(--green);border:1px solid #003318}
+.badge.banned{background:#2a0000;color:var(--red);border:1px solid #4a0000}
+.action-btn{padding:3px 10px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--text2);font-size:11px;cursor:pointer;transition:all .15s;margin-right:4px}
+.action-btn:hover{background:var(--bg3);color:#fff;border-color:#333}
+.action-btn.danger{color:var(--red);border-color:#330000}
+.action-btn.danger:hover{background:#1a0000}
+.action-btn.success{color:var(--green);border-color:#003300}
+.action-btn.success:hover{background:#001a00}
+.empty{color:var(--text3);text-align:center;padding:32px;font-size:13px}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+@media(max-width:800px){.two-col{grid-template-columns:1fr}}
+.activity-item{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #0d0d0d}
+.activity-item:last-child{border-bottom:none}
+.activity-dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0}
+.activity-text{font-size:13px;color:var(--text2);flex:1}
+.activity-time{font-size:11px;color:var(--text3)}
+.search-input{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:13px;color:#fff;width:220px;outline:none}
+.search-input:focus{border-color:#333}
+.plan-bar{display:flex;height:8px;border-radius:4px;overflow:hidden;gap:2px;margin-top:8px}
+.plan-bar div{border-radius:4px;transition:width .5s}
 </style>
 </head>
 <body>
 <header>
-  <h1>⚡ MockAPI — Admin Panel</h1>
-  <div class="right">
-    <img src="${adminUser.avatar}" style="width:24px;height:24px;border-radius:50%"/>
-    <span>${adminUser.login}</span>
-    <a href="/">← Dashboard</a>
-    <a href="/auth/logout">Logout</a>
+  <div style="display:flex;align-items:center;gap:24px">
+    <a href="/" style="text-decoration:none" class="logo">⚡ <span>MockAPI</span> <span style="color:var(--text3);font-size:11px;font-weight:400">Admin</span></a>
+    <nav>
+      <a href="#" class="active" onclick="showPage('overview',this)">Overview</a>
+      <a href="#" onclick="showPage('users',this)">Usuários</a>
+      <a href="#" onclick="showPage('endpoints',this)">Endpoints</a>
+    </nav>
+  </div>
+  <div class="user-info">
+    <img src="${av}"/>
+    <span>${lg}</span>
+    <a href="/" style="color:var(--text3);font-size:12px">Dashboard</a>
+    <a href="/auth/logout" style="color:var(--text3);font-size:12px">Sair</a>
   </div>
 </header>
+
 <div class="container">
-  <div class="stats-grid" id="stats-grid">
-    <div class="stat-card green">
-      <div class="label">Usuários</div>
-      <div class="value" id="stat-users">—</div>
-      <div class="sub" id="stat-users-week">— novos esta semana</div>
+
+  <!-- OVERVIEW PAGE -->
+  <div class="page active" id="page-overview">
+    <div class="stats-grid" id="stats-grid">
+      <div class="stat highlight">
+        <div class="stat-label">Usuários</div>
+        <div class="stat-value" id="s-users">—</div>
+        <div class="stat-sub" id="s-users-sub">carregando...</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Endpoints</div>
+        <div class="stat-value" id="s-ep">—</div>
+        <div class="stat-sub" id="s-ep-sub">&nbsp;</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Requisições totais</div>
+        <div class="stat-value" id="s-req">—</div>
+        <div class="stat-sub" id="s-req-sub">carregando...</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Rules criadas</div>
+        <div class="stat-value" id="s-rules">—</div>
+        <div class="stat-sub">&nbsp;</div>
+      </div>
     </div>
-    <div class="stat-card">
-      <div class="label">Endpoints</div>
-      <div class="value" id="stat-endpoints">—</div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Requisições — últimos 30 dias</span>
+        <button class="refresh" onclick="loadStats()">↻ Atualizar</button>
+      </div>
+      <div class="chart-wrap">
+        <div class="chart-bars" id="chart-bars"></div>
+        <div class="chart-labels" id="chart-labels"></div>
+        <div class="tooltip" id="tooltip"></div>
+      </div>
     </div>
-    <div class="stat-card">
-      <div class="label">Requisições totais</div>
-      <div class="value" id="stat-requests">—</div>
-      <div class="sub" id="stat-req-today">— hoje</div>
-    </div>
-    <div class="stat-card">
-      <div class="label">Mock Rules</div>
-      <div class="value" id="stat-rules">—</div>
+
+    <div class="two-col">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Top Endpoints</span></div>
+        <table>
+          <thead><tr><th>Endpoint</th><th>Owner</th><th style="text-align:right">Reqs</th></tr></thead>
+          <tbody id="top-ep-body"><tr><td colspan="3" class="empty">Carregando...</td></tr></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Distribuição de Planos</span></div>
+        <div id="plans-content"><div class="empty">Carregando...</div></div>
+      </div>
     </div>
   </div>
 
-  <div class="section">
-    <h2>Requisições — últimos 30 dias <button class="refresh-btn" onclick="loadStats()">↻ Atualizar</button></h2>
-    <div id="chart-wrap"></div>
+  <!-- USERS PAGE -->
+  <div class="page" id="page-users">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+      <h2 class="section-title" style="margin:0">Usuários <span id="users-count" style="color:var(--text3)"></span></h2>
+      <input class="search-input" placeholder="Buscar por login..." id="user-search" oninput="filterUsers()"/>
+    </div>
+    <div class="card" style="padding:0">
+      <table>
+        <thead><tr><th>Usuário</th><th>Plano</th><th>Endpoints</th><th>Requisições</th><th>Membro desde</th><th>Ações</th></tr></thead>
+        <tbody id="users-tbody"><tr><td colspan="6" class="empty">Carregando...</td></tr></tbody>
+      </table>
+    </div>
   </div>
 
-  <div class="section">
-    <h2>Top Endpoints por uso</h2>
-    <table id="top-endpoints-table">
-      <thead><tr><th>Endpoint</th><th>Owner</th><th>Requisições</th></tr></thead>
-      <tbody id="top-endpoints-body"><tr><td colspan="3" style="color:#444">Carregando...</td></tr></tbody>
-    </table>
+  <!-- ENDPOINTS PAGE -->
+  <div class="page" id="page-endpoints">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+      <h2 class="section-title" style="margin:0">Todos os Endpoints</h2>
+      <button class="refresh" onclick="loadAllEndpoints()">↻ Atualizar</button>
+    </div>
+    <div class="card" style="padding:0">
+      <table>
+        <thead><tr><th>ID</th><th>Nome</th><th>Owner</th><th style="text-align:right">Requisições</th><th>Criado em</th></tr></thead>
+        <tbody id="ep-tbody"><tr><td colspan="5" class="empty">Carregando...</td></tr></tbody>
+      </table>
+    </div>
   </div>
 
-  <div class="section">
-    <h2>Usuários <button class="refresh-btn" onclick="loadUsers()">↻ Atualizar</button></h2>
-    <table>
-      <thead><tr><th>Usuário</th><th>Plano</th><th>Endpoints</th><th>Requisições</th><th>Criado em</th><th>Ações</th></tr></thead>
-      <tbody id="users-body"><tr><td colspan="6" style="color:#444">Carregando...</td></tr></tbody>
-    </table>
-  </div>
 </div>
 
 <script>
-async function loadStats() {
-  const r = await fetch('/api/admin/stats');
-  const d = await r.json();
-  document.getElementById('stat-users').textContent     = d.totalUsers;
-  document.getElementById('stat-users-week').textContent = d.newUsersWeek + ' novos esta semana';
-  document.getElementById('stat-endpoints').textContent  = d.totalEndpoints;
-  document.getElementById('stat-requests').textContent   = d.totalRequests.toLocaleString();
-  document.getElementById('stat-req-today').textContent  = d.reqToday.toLocaleString() + ' hoje';
+let allUsers = [];
 
-  // Chart
-  const wrap = document.getElementById('chart-wrap');
-  wrap.innerHTML = '';
+function showPage(name, el) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  el.classList.add('active');
+  if (name === 'users' && allUsers.length === 0) loadUsers();
+  if (name === 'endpoints') loadAllEndpoints();
+}
+
+async function loadStats() {
+  const d = await fetch('/api/admin/stats').then(r => r.json());
+  document.getElementById('s-users').textContent  = d.totalUsers.toLocaleString();
+  document.getElementById('s-ep').textContent     = d.totalEndpoints.toLocaleString();
+  document.getElementById('s-req').textContent    = d.totalRequests.toLocaleString();
+  document.getElementById('s-rules').textContent  = (d.totalRules||0).toLocaleString();
+  document.getElementById('s-users-sub').textContent = '+' + d.newUsersWeek + ' esta semana';
+  document.getElementById('s-req-sub').textContent   = d.reqToday.toLocaleString() + ' hoje';
+
+  // SVG-style bar chart
+  const bars   = document.getElementById('chart-bars');
+  const labels = document.getElementById('chart-labels');
+  const tip    = document.getElementById('tooltip');
+  bars.innerHTML = ''; labels.innerHTML = '';
   const max = Math.max(...d.chart.map(c => c.n), 1);
-  d.chart.forEach(c => {
+  d.chart.forEach((c, i) => {
     const bar = document.createElement('div');
     bar.className = 'bar';
-    bar.style.height = Math.max((c.n / max) * 100, 2) + '%';
-    bar.title = c.day + ': ' + c.n + ' req';
-    wrap.appendChild(bar);
+    bar.style.height = Math.max((c.n / max) * 110, 2) + 'px';
+    bar.addEventListener('mousemove', e => {
+      tip.style.opacity = '1';
+      tip.style.left = (e.offsetX + bar.offsetLeft - 40) + 'px';
+      tip.style.top  = (bar.parentElement.offsetTop - 36) + 'px';
+      tip.textContent = c.day.slice(5) + ': ' + c.n + ' req';
+    });
+    bar.addEventListener('mouseleave', () => tip.style.opacity = '0');
+    bars.appendChild(bar);
   });
+  // Show 4 date labels
+  if (d.chart.length > 0) {
+    const idxs = [0, Math.floor(d.chart.length/3), Math.floor(2*d.chart.length/3), d.chart.length-1];
+    idxs.forEach(i => {
+      const sp = document.createElement('span');
+      sp.textContent = (d.chart[i]||{day:''}).day.slice(5);
+      labels.appendChild(sp);
+    });
+  }
 
   // Top endpoints
-  const tbody = document.getElementById('top-endpoints-body');
-  if (d.topEndpoints.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="3" style="color:#444">Nenhum endpoint ainda</td></tr>';
+  const tbody = document.getElementById('top-ep-body');
+  tbody.innerHTML = d.topEndpoints.length === 0
+    ? '<tr><td colspan="3" class="empty">Nenhum endpoint</td></tr>'
+    : d.topEndpoints.map(e =>
+        '<tr><td><code style="color:var(--green);font-size:11px">' + e.id + '</code><span style="color:#666;margin-left:6px">' + e.name + '</span></td>'
+        + '<td style="color:var(--text2)">' + (e.owner||'—') + '</td>'
+        + '<td style="text-align:right;font-variant-numeric:tabular-nums">' + e.req_count + '</td></tr>'
+      ).join('');
+
+  // Plans distribution
+  const pc = document.getElementById('plans-content');
+  if (d.usersByPlan && d.usersByPlan.length > 0) {
+    const total = d.usersByPlan.reduce((s,p) => s + p.n, 0) || 1;
+    const colors = {free:'var(--green)',pro:'var(--blue)',enterprise:'var(--gold)'};
+    pc.innerHTML = d.usersByPlan.map(p =>
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'
+      + '<div style="display:flex;align-items:center;gap:8px"><div style="width:10px;height:10px;border-radius:2px;background:'+(colors[p.plan]||'#666')+'"></div>'
+      + '<span style="font-size:13px">' + p.plan + '</span></div>'
+      + '<span style="font-size:13px;color:var(--text2)">' + p.n + ' (' + Math.round(p.n/total*100) + '%)</span></div>'
+    ).join('')
+    + '<div class="plan-bar">' + d.usersByPlan.map(p =>
+      '<div style="flex:' + p.n + ';background:' + (colors[p.plan]||'#666') + ';opacity:.7"></div>'
+    ).join('') + '</div>';
   } else {
-    tbody.innerHTML = d.topEndpoints.map(e =>
-      '<tr><td><code style="color:#00FF87;font-size:12px">' + e.id + '</code> ' + e.name + '</td><td>' + (e.owner||'—') + '</td><td>' + e.req_count + '</td></tr>'
-    ).join('');
+    pc.innerHTML = '<div class="empty">Nenhum usuário ainda</div>';
   }
 }
 
 async function loadUsers() {
-  const r = await fetch('/api/admin/users');
-  const users = await r.json();
-  const tbody = document.getElementById('users-body');
-  if (users.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" style="color:#444">Nenhum usuário</td></tr>';
-    return;
-  }
+  const users = await fetch('/api/admin/users').then(r => r.json());
+  allUsers = users;
+  document.getElementById('users-count').textContent = '(' + users.length + ')';
+  renderUsers(users);
+}
+
+function filterUsers() {
+  const q = document.getElementById('user-search').value.toLowerCase();
+  renderUsers(allUsers.filter(u => u.login.toLowerCase().includes(q) || (u.name||'').toLowerCase().includes(q)));
+}
+
+function renderUsers(users) {
+  const tbody = document.getElementById('users-tbody');
+  if (users.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="empty">Nenhum usuário</td></tr>'; return; }
   tbody.innerHTML = users.map(u => {
     const badges = [];
-    if (u.isAdmin) badges.push('<span class="badge admin">admin</span>');
-    if (u.banned)  badges.push('<span class="badge banned">banido</span>');
-    else           badges.push('<span class="badge free">' + u.plan + '</span>');
+    if (u.isAdmin) badges.push('<span class="badge admin">👑 admin</span>');
+    if (u.banned)  badges.push('<span class="badge banned">🚫 banido</span>');
+    else           badges.push('<span class="badge ' + u.plan + '">' + u.plan + '</span>');
     const actions = [];
-    if (!u.isAdmin) actions.push('<button class="btn success" onclick="promote(\''+u.id+'\')">Promover</button>');
-    else            actions.push('<button class="btn" onclick="demote(\''+u.id+'\')">Remover admin</button>');
-    if (!u.banned)  actions.push('<button class="btn danger" onclick="ban(\''+u.id+'\')">Banir</button>');
-    else            actions.push('<button class="btn" onclick="unban(\''+u.id+'\')">Desbanir</button>');
-    return '<tr>' +
-      '<td><img src="'+u.avatar+'" class="avatar"/><strong>'+u.login+'</strong> '+badges.join(' ')+'</td>' +
-      '<td>'+u.plan+'</td>' +
-      '<td>'+u.epCount+'</td>' +
-      '<td>'+u.reqCount+'</td>' +
-      '<td style="color:#444;font-size:11px">'+(u.createdAt||'').slice(0,10)+'</td>' +
-      '<td style="display:flex;gap:4px">'+actions.join('')+'</td>' +
-    '</tr>';
+    if (!u.isAdmin) actions.push('<button class="action-btn success" data-id="'+u.id+'" data-action="promote" onclick="actBtn(this)">Promover</button>');
+    else            actions.push('<button class="action-btn" data-id="'+u.id+'" data-action="demote" onclick="actBtn(this)">- Admin</button>');
+    if (!u.banned)  actions.push('<button class="action-btn danger" data-id="'+u.id+'" data-action="ban" onclick="actBtn(this)">Banir</button>');
+    else            actions.push('<button class="action-btn" data-id="'+u.id+'" data-action="unban" onclick="actBtn(this)">Desbanir</button>');
+    return '<tr>'
+      + '<td><img src="'+(u.avatar||'')+'" class="avatar"/><strong>'+u.login+'</strong> '+(u.name?'<span style="color:var(--text3);font-size:12px">'+u.name+'</span>':'')+' '+badges.join('')+'</td>'
+      + '<td>'+u.plan+'</td>'
+      + '<td>'+u.epCount+'</td>'
+      + '<td>'+u.reqCount+'</td>'
+      + '<td style="color:var(--text3);font-size:12px">'+(u.createdAt||'').slice(0,10)+'</td>'
+      + '<td>'+actions.join('')+'</td>'
+      + '</tr>';
   }).join('');
 }
 
-async function userAction(id, action) {
+async function loadAllEndpoints() {
+  const eps = await fetch('/api/admin/endpoints').then(r => r.json());
+  const tbody = document.getElementById('ep-tbody');
+  if (!eps.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty">Nenhum endpoint</td></tr>'; return; }
+  tbody.innerHTML = eps.map(e =>
+    '<tr>'
+    + '<td><code style="color:var(--green);font-size:11px">'+e.id+'</code></td>'
+    + '<td>'+e.name+'</td>'
+    + '<td style="color:var(--text2)">'+(e.userId||'—')+'</td>'
+    + '<td style="text-align:right">'+e.requestCount+'</td>'
+    + '<td style="color:var(--text3);font-size:12px">'+(e.createdAt||'').slice(0,10)+'</td>'
+    + '</tr>'
+  ).join('');
+}
+
+async function act(id, action) {
   await fetch('/api/admin/users/' + id + '/' + action, { method: 'POST' });
   loadUsers();
 }
-const ban     = id => userAction(id, 'ban');
-const unban   = id => userAction(id, 'unban');
-const promote = id => userAction(id, 'promote');
-const demote  = id => userAction(id, 'demote');
+function actBtn(btn) { act(btn.dataset.id, btn.dataset.action); }
 
 loadStats();
-loadUsers();
 setInterval(loadStats, 30000);
 </script>
+</body></html>`;
+}
+
+// ── LANDING PAGE ─────────────────────────────────────────────────────────────
+function getLandingHTML(baseUrl) {
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MockAPI Inspector — Mock Server com CRUD Real</title>
+<meta name="description" content="Crie mocks de API com CRUD persistente, Faker integrado e import OpenAPI. Mais poderoso que o Beeceptor."/>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--green:#00FF87;--bg:#0a0a0a;--bg2:#111;--border:#1a1a1a}
+body{background:var(--bg);color:#e0e0e0;font-family:'Inter',system-ui,sans-serif}
+a{color:var(--green);text-decoration:none}
+header{border-bottom:1px solid var(--border);padding:0 48px;height:60px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:rgba(10,10,10,.9);backdrop-filter:blur(12px);z-index:10}
+.logo{font-size:16px;font-weight:700;color:#fff}
+.logo span{color:var(--green)}
+.nav-links{display:flex;gap:24px;align-items:center;font-size:14px}
+.nav-links a{color:#888;transition:color .15s}
+.nav-links a:hover{color:#fff}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:8px;font-size:14px;font-weight:600;transition:all .2s;cursor:pointer;text-decoration:none}
+.btn-primary{background:var(--green);color:#000}
+.btn-primary:hover{background:#00e87a;transform:translateY(-1px)}
+.btn-outline{border:1px solid #333;color:#888;background:transparent}
+.btn-outline:hover{border-color:#555;color:#fff}
+.hero{text-align:center;padding:100px 48px 80px;max-width:900px;margin:0 auto}
+.hero-badge{display:inline-flex;align-items:center;gap:6px;background:#001a0a;border:1px solid #003318;border-radius:100px;padding:6px 14px;font-size:12px;color:var(--green);margin-bottom:24px}
+h1{font-size:56px;font-weight:800;line-height:1.1;color:#fff;margin-bottom:20px;letter-spacing:-.02em}
+h1 span{color:var(--green)}
+.hero-sub{font-size:18px;color:#666;margin-bottom:40px;line-height:1.6;max-width:600px;margin-left:auto;margin-right:auto}
+.hero-btns{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.features-section{padding:80px 48px;max-width:1100px;margin:0 auto}
+.features-title{text-align:center;font-size:13px;color:#444;text-transform:uppercase;letter-spacing:.1em;margin-bottom:48px}
+.features-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+@media(max-width:768px){.features-grid{grid-template-columns:1fr}h1{font-size:36px}}
+.feature-card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:28px}
+.feature-icon{font-size:24px;margin-bottom:14px}
+.feature-title{font-size:15px;font-weight:700;color:#fff;margin-bottom:8px}
+.feature-desc{font-size:13px;color:#555;line-height:1.6}
+.compare-section{padding:80px 48px;background:var(--bg2);border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.compare-inner{max-width:900px;margin:0 auto}
+.compare-title{text-align:center;font-size:28px;font-weight:700;color:#fff;margin-bottom:48px}
+.compare-table{width:100%;border-collapse:collapse;font-size:14px}
+.compare-table th{text-align:left;padding:12px 16px;color:#555;font-weight:500;border-bottom:1px solid var(--border)}
+.compare-table td{padding:14px 16px;border-bottom:1px solid #0f0f0f}
+.compare-table td:first-child{color:#888}
+.check{color:var(--green);font-size:16px}
+.cross{color:#444}
+.highlight-col{background:#001408}
+.cta-section{text-align:center;padding:100px 48px}
+.cta-section h2{font-size:36px;font-weight:700;color:#fff;margin-bottom:16px}
+.cta-section p{color:#555;margin-bottom:32px;font-size:16px}
+footer{border-top:1px solid var(--border);padding:32px 48px;display:flex;justify-content:space-between;align-items:center;font-size:13px;color:#333}
+.terminal{background:#0d0d0d;border:1px solid #1e1e1e;border-radius:10px;padding:20px 24px;text-align:left;margin-top:48px;max-width:560px;margin-left:auto;margin-right:auto}
+.terminal-bar{display:flex;gap:6px;margin-bottom:16px}
+.dot{width:10px;height:10px;border-radius:50%}
+.terminal code{font-family:'Space Mono',monospace;font-size:13px;line-height:2;display:block}
+.terminal .cmd{color:var(--green)}
+.terminal .out{color:#666}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">⚡ <span>MockAPI</span> Inspector</div>
+  <div class="nav-links">
+    <a href="/docs">Docs</a>
+    <a href="https://github.com/andersonrolim/mockapi" target="_blank">GitHub</a>
+    <a href="/login" class="btn btn-primary" style="padding:8px 16px;font-size:13px">Começar grátis →</a>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="hero-badge">✦ Mock server com estado persistente</div>
+  <h1>Simule um <span>backend real</span> em segundos</h1>
+  <p class="hero-sub">CRUD completo, Faker integrado, import OpenAPI e histórico de requisições em tempo real. Mais poderoso que o Beeceptor.</p>
+  <div class="hero-btns">
+    <a href="/login" class="btn btn-primary">Entrar com GitHub — é grátis</a>
+    <a href="/docs" class="btn btn-outline">Ver documentação</a>
+  </div>
+  <div class="terminal">
+    <div class="terminal-bar"><div class="dot" style="background:#ff5f57"></div><div class="dot" style="background:#febc2e"></div><div class="dot" style="background:#28c840"></div></div>
+    <code><span class="cmd"># Cria um mock de users em 10 segundos</span></code>
+    <code><span class="cmd">POST</span> <span style="color:#fff">https://mockapi.dev/mock/ABC123/users</span></code>
+    <code><span class="out">→ {"id": "x9K2","nome": "Maria Silva","email": "maria@email.com"}</span></code>
+    <code>&nbsp;</code>
+    <code><span class="cmd">GET</span> <span style="color:#fff">https://mockapi.dev/mock/ABC123/users</span></code>
+    <code><span class="out">→ {"data": [...], "total": 1, "page": 1}</span></code>
+  </div>
+</section>
+
+<section class="features-section">
+  <div class="features-title">Tudo que você precisa para mockar uma API</div>
+  <div class="features-grid">
+    <div class="feature-card">
+      <div class="feature-icon">🗄️</div>
+      <div class="feature-title">CRUD com estado real</div>
+      <div class="feature-desc">GET, POST, PUT, PATCH, DELETE automáticos com persistência. Os dados ficam salvos entre requisições — diferente de mocks que resetam a cada request.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">✦</div>
+      <div class="feature-title">Faker integrado</div>
+      <div class="feature-desc">Popule sua tabela com dados realistas em 1 clique. 30+ geradores: nomes, CPF, CNPJ, emails, endereços, preços, datas e muito mais.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">📋</div>
+      <div class="feature-title">Import OpenAPI</div>
+      <div class="feature-desc">Cole seu spec YAML ou JSON e o sistema gera as tabelas CRUD e Mock Rules automaticamente. Suporta OpenAPI 2.x e 3.x.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">⚡</div>
+      <div class="feature-title">Histórico em tempo real</div>
+      <div class="feature-desc">Veja cada requisição chegando ao vivo via WebSocket — método, status, headers, body, latência. Perfeito para debug.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">⏱️</div>
+      <div class="feature-title">Delay e Mock Rules</div>
+      <div class="feature-desc">Simule latência de rede (0–5000ms), erros específicos por rota, respostas customizadas por método. Teste cenários de falha com facilidade.</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🔒</div>
+      <div class="feature-title">Login com GitHub</div>
+      <div class="feature-desc">Seus endpoints são privados e isolados. Login em 1 clique via OAuth do GitHub — sem senha, sem formulário chato.</div>
+    </div>
+  </div>
+</section>
+
+<section class="compare-section">
+  <div class="compare-inner">
+    <div class="compare-title">Por que não o Beeceptor?</div>
+    <table class="compare-table">
+      <thead><tr><th>Feature</th><th>Beeceptor</th><th class="highlight-col" style="color:var(--green)">MockAPI Inspector</th></tr></thead>
+      <tbody>
+        <tr><td>Mock rules estáticas</td><td class="check">✓</td><td class="check highlight-col">✓</td></tr>
+        <tr><td>CRUD com estado persistente</td><td class="cross">✗</td><td class="check highlight-col">✓</td></tr>
+        <tr><td>Faker / seed de dados</td><td class="cross">✗</td><td class="check highlight-col">✓</td></tr>
+        <tr><td>Import OpenAPI/Swagger</td><td class="cross">✗</td><td class="check highlight-col">✓</td></tr>
+        <tr><td>Export/Import JSON</td><td class="cross">✗</td><td class="check highlight-col">✓</td></tr>
+        <tr><td>Histórico em tempo real (WS)</td><td class="cross">✗</td><td class="check highlight-col">✓</td></tr>
+        <tr><td>Self-hosted</td><td class="cross">✗</td><td class="check highlight-col">✓ (open source)</td></tr>
+        <tr><td>Grátis para começar</td><td class="check">✓</td><td class="check highlight-col">✓</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="cta-section">
+  <h2>Pronto para usar?</h2>
+  <p>Crie sua conta em 1 clique. Sem cartão de crédito.</p>
+  <a href="/login" class="btn btn-primary" style="font-size:16px;padding:14px 28px">Entrar com GitHub →</a>
+</section>
+
+<footer>
+  <div>⚡ MockAPI Inspector — Mock server para devs</div>
+  <div style="display:flex;gap:20px"><a href="/docs" style="color:#333">Docs</a><a href="/login" style="color:#333">Login</a></div>
+</footer>
+</body></html>`;
+}
+
+// ── DOCS PAGE ─────────────────────────────────────────────────────────────────
+function getDocsHTML(baseUrl) {
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Documentação — MockAPI Inspector</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--green:#00FF87;--bg:#0a0a0a;--bg2:#111;--bg3:#161616;--border:#1a1a1a;--text:#e0e0e0;--text2:#888;--text3:#444}
+body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;display:flex;flex-direction:column;min-height:100vh}
+a{color:var(--green);text-decoration:none}
+header{border-bottom:1px solid var(--border);padding:0 32px;height:56px;display:flex;align-items:center;justify-content:space-between;background:var(--bg2);position:sticky;top:0;z-index:10}
+.logo{font-size:15px;font-weight:700;color:#fff}
+.logo span{color:var(--green)}
+.layout{display:flex;flex:1}
+.sidebar{width:240px;border-right:1px solid var(--border);padding:24px 0;position:sticky;top:56px;height:calc(100vh - 56px);overflow-y:auto;flex-shrink:0}
+.sidebar-group{margin-bottom:24px}
+.sidebar-group-title{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.1em;padding:0 20px;margin-bottom:8px}
+.sidebar a{display:block;padding:6px 20px;font-size:13px;color:var(--text2);transition:all .15s;border-left:2px solid transparent}
+.sidebar a:hover{color:#fff;background:var(--bg3)}
+.sidebar a.active{color:var(--green);border-left-color:var(--green);background:var(--bg3)}
+.content{flex:1;max-width:800px;padding:40px 48px}
+h1{font-size:30px;font-weight:700;color:#fff;margin-bottom:12px}
+h2{font-size:20px;font-weight:700;color:#fff;margin:40px 0 12px;padding-top:40px;border-top:1px solid var(--border)}
+h3{font-size:15px;font-weight:600;color:#ccc;margin:24px 0 8px}
+p{color:var(--text2);line-height:1.7;margin-bottom:16px;font-size:14px}
+.lead{font-size:16px;color:#aaa;line-height:1.6;margin-bottom:32px}
+pre{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:20px;overflow-x:auto;margin:16px 0}
+code{font-family:'Space Mono',monospace;font-size:12px;line-height:1.6}
+.inline-code{background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:12px;color:var(--green)}
+.method{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;margin-right:6px;font-family:'Space Mono',monospace}
+.get{background:#001a3a;color:#4dabf7}
+.post{background:#001a0a;color:var(--green)}
+.put{background:#2a1a00;color:#ffa94d}
+.patch{background:#1a0a2a;color:#da77f2}
+.delete{background:#2a0000;color:#ff6b6b}
+.endpoint-row{display:flex;align-items:center;gap:10px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:10px;font-size:13px}
+.endpoint-path{font-family:'Space Mono',monospace;color:#fff}
+.endpoint-desc{color:var(--text2);margin-left:auto;font-size:12px}
+.note{background:#001408;border:1px solid #003318;border-radius:8px;padding:14px 16px;margin:16px 0;font-size:13px;color:#aaa}
+.note strong{color:var(--green)}
+table{width:100%;border-collapse:collapse;font-size:13px;margin:16px 0}
+th{text-align:left;color:var(--text3);font-size:11px;text-transform:uppercase;letter-spacing:.05em;padding:8px 12px;border-bottom:1px solid var(--border)}
+td{padding:10px 12px;border-bottom:1px solid #0d0d0d;vertical-align:top}
+td:first-child{font-family:'Space Mono',monospace;color:var(--green);font-size:12px}
+td:nth-child(2){color:#888;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">⚡ <span>MockAPI</span> Inspector</div>
+  <div style="display:flex;gap:16px;font-size:13px">
+    <a href="/" style="color:#666">Home</a>
+    <a href="/login" style="color:#666">Login</a>
+  </div>
+</header>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">Introdução</div>
+      <a href="#intro" class="active">O que é</a>
+      <a href="#quickstart">Quickstart</a>
+      <a href="#concepts">Conceitos</a>
+    </div>
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">CRUD</div>
+      <a href="#crud-create">Criar tabela</a>
+      <a href="#crud-ops">Operações</a>
+      <a href="#crud-faker">Faker</a>
+    </div>
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">Mock Rules</div>
+      <a href="#rules">Regras</a>
+      <a href="#delay">Delay</a>
+    </div>
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">API Reference</div>
+      <a href="#api-endpoints">Endpoints</a>
+      <a href="#api-crud">CRUD</a>
+      <a href="#api-rules">Rules</a>
+      <a href="#api-faker">Faker</a>
+    </div>
+  </nav>
+
+  <div class="content">
+    <h1 id="intro">MockAPI Inspector</h1>
+    <p class="lead">Mock server com CRUD persistente, Faker integrado e import OpenAPI. Simule um backend completo sem escrever uma linha de código.</p>
+
+    <h2 id="quickstart">Quickstart</h2>
+    <p>Crie um endpoint e comece a receber requisições em 30 segundos:</p>
+    <pre><code><span style="color:#666"># 1. Crie um endpoint no dashboard</span>
+<span style="color:var(--green)">POST</span> /api/endpoints
+{ "name": "Minha API" }
+
+<span style="color:#666"># 2. Use o ID retornado para fazer requisições</span>
+<span style="color:var(--green)">POST</span> ${baseUrl}/mock/{ID}/users
+{ "nome": "João", "email": "joao@email.com" }
+
+<span style="color:#666"># 3. Liste os dados salvos</span>
+<span style="color:#4dabf7">GET</span>  ${baseUrl}/mock/{ID}/users
+<span style="color:#666">→ { "data": [...], "total": 1, "page": 1 }</span></code></pre>
+
+    <h2 id="concepts">Conceitos</h2>
+    <h3>Endpoint</h3>
+    <p>Um endpoint é um namespace isolado para sua API. Cada endpoint tem um ID único (ex: <span class="inline-code">ABC123</span>) e pode ter múltiplas tabelas CRUD e Mock Rules.</p>
+    <h3>CRUD Table</h3>
+    <p>Uma tabela CRUD é criada com um path (ex: <span class="inline-code">/users</span>) e automaticamente responde a GET, POST, PUT, PATCH e DELETE. Os dados ficam persistidos no banco.</p>
+    <h3>Mock Rule</h3>
+    <p>Uma regra que intercepta requisições para um path específico e retorna uma resposta customizada — status HTTP, delay, body fixo.</p>
+
+    <h2 id="crud-create">Criar Tabela CRUD</h2>
+    <p>No dashboard, vá em <strong>CRUD → Nova Tabela</strong> e informe o path (ex: <span class="inline-code">/produtos</span>). O sistema cria automaticamente:</p>
+    <div class="endpoint-row"><span class="method get">GET</span><span class="endpoint-path">/mock/{ID}/produtos</span><span class="endpoint-desc">Lista todos com paginação</span></div>
+    <div class="endpoint-row"><span class="method get">GET</span><span class="endpoint-path">/mock/{ID}/produtos/{id}</span><span class="endpoint-desc">Busca por ID</span></div>
+    <div class="endpoint-row"><span class="method post">POST</span><span class="endpoint-path">/mock/{ID}/produtos</span><span class="endpoint-desc">Cria novo registro</span></div>
+    <div class="endpoint-row"><span class="method put">PUT</span><span class="endpoint-path">/mock/{ID}/produtos/{id}</span><span class="endpoint-desc">Substitui registro</span></div>
+    <div class="endpoint-row"><span class="method patch">PATCH</span><span class="endpoint-path">/mock/{ID}/produtos/{id}</span><span class="endpoint-desc">Atualiza campos</span></div>
+    <div class="endpoint-row"><span class="method delete">DELETE</span><span class="endpoint-path">/mock/{ID}/produtos/{id}</span><span class="endpoint-desc">Remove registro</span></div>
+
+    <h2 id="crud-ops">Paginação e Filtros</h2>
+    <p>O GET de lista suporta parâmetros de query:</p>
+    <table>
+      <thead><tr><th>Parâmetro</th><th>Tipo</th><th>Descrição</th></tr></thead>
+      <tbody>
+        <tr><td>_page</td><td>number</td><td>Página (padrão: 1)</td></tr>
+        <tr><td>_limit</td><td>number</td><td>Itens por página (padrão: todos)</td></tr>
+      </tbody>
+    </table>
+    <pre><code><span style="color:#4dabf7">GET</span> /mock/{ID}/users?_page=2&_limit=10
+<span style="color:#666">→ { "data": [...], "total": 47, "page": 2, "limit": 10 }</span></code></pre>
+
+    <h2 id="crud-faker">Faker</h2>
+    <p>Use templates <span class="inline-code">{"{"}{"{"}faker.field{"}"}{"}"}</span> no body do POST para gerar dados dinâmicos:</p>
+    <pre><code><span style="color:var(--green)">POST</span> /mock/{ID}/users
+{
+  "nome":    "{{faker.name}}",
+  "email":   "{{faker.email}}",
+  "cidade":  "{{faker.city}}",
+  "empresa": "{{faker.company}}"
+}</code></pre>
+    <p>Geradores disponíveis:</p>
+    <table>
+      <thead><tr><th>Token</th><th>Exemplo</th></tr></thead>
+      <tbody>
+        <tr><td>{{faker.name}}</td><td>João Silva</td></tr>
+        <tr><td>{{faker.email}}</td><td>joao@email.com</td></tr>
+        <tr><td>{{faker.cpf}}</td><td>123.456.789-00</td></tr>
+        <tr><td>{{faker.cnpj}}</td><td>12.345.678/0001-90</td></tr>
+        <tr><td>{{faker.phone}}</td><td>(11) 99999-0000</td></tr>
+        <tr><td>{{faker.city}}</td><td>São Paulo</td></tr>
+        <tr><td>{{faker.company}}</td><td>TechCorp Ltda</td></tr>
+        <tr><td>{{faker.price}}</td><td>149.90</td></tr>
+        <tr><td>{{faker.uuid}}</td><td>a1b2c3d4-...</td></tr>
+        <tr><td>{{faker.date}}</td><td>2024-03-15</td></tr>
+        <tr><td>{{faker.boolean}}</td><td>true</td></tr>
+        <tr><td>{{faker.status}}</td><td>active</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="rules">Mock Rules</h2>
+    <p>Crie regras para interceptar requisições e retornar respostas customizadas. Útil para simular erros, autenticação e cenários específicos.</p>
+    <pre><code><span style="color:var(--green)">POST</span> /api/rules/{epId}
+{
+  "method": "POST",
+  "path":   "/auth/login",
+  "status": 401,
+  "delay":  500,
+  "body":   "{\\"error\\": \\"Invalid credentials\\"}"
+}</code></pre>
+    <div class="note"><strong>Prioridade:</strong> Mock Rules têm prioridade sobre tabelas CRUD. Se uma requisição bate em uma Rule e também em uma tabela, a Rule vence.</div>
+
+    <h2 id="delay">Delay Global</h2>
+    <p>Configure um delay em ms para simular latência de rede em todas as requisições do endpoint. Acesse via botão <span class="inline-code">⏱ Xms</span> no dashboard.</p>
+    <pre><code><span style="color:#da77f2">PATCH</span> /api/endpoints/{id}
+{ "globalDelay": 1000 }  <span style="color:#666">// 1 segundo de delay em todas as resps</span></code></pre>
+
+    <h2 id="api-endpoints">API Reference — Endpoints</h2>
+    <div class="endpoint-row"><span class="method get">GET</span><span class="endpoint-path">/api/endpoints</span><span class="endpoint-desc">Lista seus endpoints</span></div>
+    <div class="endpoint-row"><span class="method post">POST</span><span class="endpoint-path">/api/endpoints</span><span class="endpoint-desc">Cria endpoint</span></div>
+    <div class="endpoint-row"><span class="method patch">PATCH</span><span class="endpoint-path">/api/endpoints/{id}</span><span class="endpoint-desc">Atualiza nome/delay</span></div>
+    <div class="endpoint-row"><span class="method delete">DELETE</span><span class="endpoint-path">/api/endpoints/{id}</span><span class="endpoint-desc">Remove endpoint</span></div>
+
+    <h2 id="api-crud">API Reference — CRUD</h2>
+    <div class="endpoint-row"><span class="method get">GET</span><span class="endpoint-path">/api/crud/{epId}</span><span class="endpoint-desc">Lista tabelas do endpoint</span></div>
+    <div class="endpoint-row"><span class="method post">POST</span><span class="endpoint-path">/api/crud/{epId}</span><span class="endpoint-desc">Cria nova tabela CRUD</span></div>
+    <div class="endpoint-row"><span class="method delete">DELETE</span><span class="endpoint-path">/api/crud/{epId}/{key}</span><span class="endpoint-desc">Remove tabela</span></div>
+    <div class="endpoint-row"><span class="method get">GET</span><span class="endpoint-path">/api/export/{epId}/{key}</span><span class="endpoint-desc">Exporta dados como JSON</span></div>
+    <div class="endpoint-row"><span class="method post">POST</span><span class="endpoint-path">/api/import/{epId}</span><span class="endpoint-desc">Importa dados JSON</span></div>
+
+    <h2 id="api-rules">API Reference — Rules</h2>
+    <div class="endpoint-row"><span class="method get">GET</span><span class="endpoint-path">/api/rules/{epId}</span><span class="endpoint-desc">Lista regras</span></div>
+    <div class="endpoint-row"><span class="method post">POST</span><span class="endpoint-path">/api/rules/{epId}</span><span class="endpoint-desc">Cria regra</span></div>
+    <div class="endpoint-row"><span class="method delete">DELETE</span><span class="endpoint-path">/api/rules/{epId}/{ruleId}</span><span class="endpoint-desc">Remove regra</span></div>
+
+    <h2 id="api-faker">API Reference — Faker</h2>
+    <div class="endpoint-row"><span class="method post">POST</span><span class="endpoint-path">/api/faker/{epId}/{key}</span><span class="endpoint-desc">Seed em massa</span></div>
+    <pre><code><span style="color:var(--green)">POST</span> /api/faker/{epId}/users
+{
+  "template": { "nome": "{{faker.name}}", "email": "{{faker.email}}" },
+  "count": 50
+}</code></pre>
+
+    <div style="margin-top:60px;padding-top:32px;border-top:1px solid var(--border);color:var(--text3);font-size:13px">
+      MockAPI Inspector — <a href="/">Home</a> · <a href="/login">Login</a>
+    </div>
+  </div>
+</div>
 </body></html>`;
 }
 
