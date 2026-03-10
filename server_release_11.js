@@ -38,85 +38,7 @@ function genId(len = 6) {
   return crypto.randomBytes(len).toString('hex').toUpperCase().slice(0, len);
 }
 
-// ── POSTMAN COLLECTION PARSER ─────────────────────────────────────────────────
-function parsePostmanCollection(col, user, existingEpId) {
-  // Support both wrapped { collection: {...} } and raw collection object
-  const c = col.info ? col : col.collection || col;
-  if (!c || !c.info) throw new Error('Formato de collection inválido. Export como Collection v2.0 ou v2.1.');
-
-  const colName = c.info.name || 'Postman Import';
-  const endpoints = [];
-
-  // Flatten items (supports nested folders)
-  function flattenItems(items, prefix = '') {
-    const rules = [];
-    for (const item of (items || [])) {
-      if (item.item) {
-        // Folder — recurse
-        const folderName = item.name ? `${prefix}/${item.name}`.replace(/\/+/g,'/') : prefix;
-        rules.push(...flattenItems(item.item, folderName));
-      } else if (item.request) {
-        // Request item
-        const req = item.request;
-        const method = (typeof req === 'string' ? 'GET' : req.method || 'GET').toUpperCase();
-        // Extract path — strip host/protocol/variables
-        let rawUrl = '';
-        if (req.url) {
-          rawUrl = typeof req.url === 'string' ? req.url
-                  : (req.url.raw || (req.url.path || []).join('/'));
-        }
-        // Remove protocol + host, keep path only
-        rawUrl = rawUrl.replace(/^https?:\/\/[^\/]+/, '').replace(/\{\{[^}]+\}\}/g, '').replace(/^\/+/, '/') || '/';
-        // Remove query string
-        const path = rawUrl.split('?')[0] || '/';
-        // Extract example response
-        let status = 200;
-        let body = '{"ok":true}';
-        if (item.response && item.response.length > 0) {
-          const ex = item.response[0];
-          status = parseInt(ex.status || ex.code || 200) || 200;
-          if (ex.body) {
-            try { JSON.parse(ex.body); body = ex.body; } catch(_) { body = JSON.stringify({ message: ex.body }); }
-          }
-        }
-        rules.push({ method, path, status, body, name: item.name || `${method} ${path}` });
-      }
-    }
-    return rules;
-  }
-
-  const allRules = flattenItems(c.item);
-  if (allRules.length === 0) throw new Error('Nenhum request encontrado na collection.');
-
-  // Group rules into a single endpoint (or use existing)
-  const epId = existingEpId || genId();
-  const ep = {
-    id: epId,
-    userId: user ? user.id : null,
-    name: colName,
-    path: `/${epId}`,
-    corsEnabled: true,
-    globalDelay: 0,
-    rateLimit: 100,
-    requestCount: 0,
-    createdAt: new Date().toISOString(),
-    _rules: allRules.map(r => ({
-      id: genId(),
-      endpointId: epId,
-      method: r.method,
-      path: r.path,
-      status: r.status,
-      delay: 0,
-      body: r.body,
-      createdAt: new Date().toISOString(),
-    }))
-  };
-  endpoints.push(ep);
-
-  return { name: colName, endpoints };
-}
-
-
+// ── AUTH CONFIG ───────────────────────────────────────────────────────────────
 const GITHUB_CLIENT_ID     = process.env.GITHUB_CLIENT_ID     || '';
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || '';
 const SESSION_SECRET       = process.env.SESSION_SECRET       || 'dev_secret_change_me';
@@ -772,14 +694,6 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
                  corsEnabled: data.corsEnabled !== false, globalDelay: parseInt(data.globalDelay)||0,
                  rateLimit: parseInt(data.rateLimit)||100, requestCount: 0, createdAt: new Date().toISOString() };
     db.saveEndpoint(ep);
-    // Auto-init CRUD table when crud:true (SDK usage)
-    if (data.crud !== false) {
-      const crudPath = '/' + (data.name || id).toLowerCase().replace(/\s+/g, '-');
-      const tableKey = id + crudPath;
-      db.saveCrudTable(tableKey, id, crudPath, data.idField || 'id');
-      ep.crudPath = crudPath;
-      ep.tableKey = tableKey;
-    }
     broadcast(null, 'endpoint_created', ep);
     return json(res, ep, 201);
   }
@@ -946,59 +860,6 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
         tablesCreated++;
       }
       return json(res, { ok: true, title: parsed.title, rulesCreated, tablesCreated, crudPaths: parsed.crudPaths });
-    } catch(e) {
-      return json(res, { error: e.message }, 400);
-    }
-  }
-
-  // ── POSTMAN COLLECTION IMPORT ────────────────────────────────────────────
-  // POST /api/postman  body: { collection: {...} }
-  // POST /api/postman/:epId  body: { collection: {...} } — import into existing endpoint
-  const postmanMatch = pathname.match(/^\/api\/postman(?:\/([A-Z0-9]+))?$/);
-  if (method === 'POST' && postmanMatch) {
-    const user = requireAuth(req, res);
-    if (!user) return;
-    const body = await readBody(req);
-    let data = {}; try { data = JSON.parse(body); } catch(_) {}
-    const col = data.collection;
-    if (!col) return json(res, { error: 'collection required' }, 400);
-    try {
-      const result = parsePostmanCollection(col, user, postmanMatch[1]);
-      // Create endpoints + rules from parsed collection
-      const created = [];
-      for (const ep of result.endpoints) {
-        db.saveEndpoint(ep);
-        broadcast(null, 'endpoint_created', ep);
-        for (const rule of ep._rules || []) {
-          db.saveRule(rule);
-          broadcast(ep.id, 'rule_added', rule);
-        }
-        created.push({ id: ep.id, name: ep.name, rules: (ep._rules||[]).length });
-      }
-      return json(res, { ok: true, endpoints: created.length, details: created });
-    } catch(e) {
-      return json(res, { error: e.message }, 400);
-    }
-  }
-
-  // POST /api/postman/preview — returns what would be imported without saving
-  if (method === 'POST' && pathname === '/api/postman/preview') {
-    const user = requireAuth(req, res);
-    if (!user) return;
-    const body = await readBody(req);
-    let data = {}; try { data = JSON.parse(body); } catch(_) {}
-    const col = data.collection;
-    if (!col) return json(res, { error: 'collection required' }, 400);
-    try {
-      const result = parsePostmanCollection(col, user, null);
-      return json(res, {
-        ok: true,
-        name: result.name,
-        endpoints: result.endpoints.map(ep => ({
-          name: ep.name,
-          rules: (ep._rules||[]).map(r => ({ method: r.method, path: r.path, status: r.status }))
-        }))
-      });
     } catch(e) {
       return json(res, { error: e.message }, 400);
     }
@@ -3327,9 +3188,6 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
                 <p style="font-size:13px;color:var(--text3)">Defina um caminho e o sistema faz GET/POST/PUT/PATCH/DELETE automaticamente com persistência em memória.</p>
               </div>
               <div style="display:flex;gap:8px">
-                <button style="background:#F97316;background:#F9731615;border:1px solid #F9731644;border-radius:8px;padding:10px 16px;color:#FB923C;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .2s" onclick="showPostmanModal()" onmouseover="this.style.background='#F9731625'" onmouseout="this.style.background='#F9731615'">
-                  📦 Postman
-                </button>
                 <button style="background:#7C3AED15;border:1px solid #7C3AED44;border-radius:8px;padding:10px 16px;color:#A78BFA;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .2s" onclick="showOpenApiModal()" onmouseover="this.style.background='#7C3AED25'" onmouseout="this.style.background='#7C3AED15'">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                   OpenAPI
@@ -4800,101 +4658,6 @@ async function importOpenAPI() {
   toast('Importado: ' + result.rulesCreated + ' regras + ' + result.tablesCreated + ' tabelas', 'success');
 }
 
-// ── POSTMAN IMPORT ────────────────────────────────────────────────────────────
-function showPostmanModal() {
-  document.getElementById('postman-json').value = '';
-  document.getElementById('postman-preview').style.display = 'none';
-  document.getElementById('postman-result').style.display = 'none';
-  document.getElementById('postman-import-btn').disabled = true;
-  document.getElementById('postman-import-btn').style.opacity = '.5';
-  document.getElementById('postman-modal').style.display = 'flex';
-}
-function closePostmanModal() {
-  document.getElementById('postman-modal').style.display = 'none';
-}
-function handlePostmanDrop(e) {
-  e.preventDefault();
-  const dz = document.getElementById('postman-drop-zone');
-  dz.style.borderColor = 'var(--border2)'; dz.style.background = '';
-  const file = e.dataTransfer.files[0];
-  if (!file) return;
-  readPostmanFile(file);
-}
-function handlePostmanFile(input) {
-  if (!input.files[0]) return;
-  readPostmanFile(input.files[0]);
-}
-function readPostmanFile(file) {
-  const reader = new FileReader();
-  reader.onload = e => {
-    document.getElementById('postman-json').value = e.target.result;
-    previewPostman();
-  };
-  reader.readAsText(file);
-}
-async function previewPostman() {
-  const raw = document.getElementById('postman-json').value.trim();
-  if (!raw) { toast('Cole o JSON da collection.', 'error'); return; }
-  let collection;
-  try { collection = JSON.parse(raw); } catch(_) { toast('JSON inválido.', 'error'); return; }
-  const btn = document.getElementById('postman-preview-btn');
-  btn.textContent = '⏳ Analisando...'; btn.disabled = true;
-  const result = await api('POST', '/api/postman/preview', { collection });
-  btn.textContent = '👁 Preview'; btn.disabled = false;
-  if (result.error) { toast(result.error, 'error'); return; }
-  // Render preview
-  const list = document.getElementById('postman-preview-list');
-  list.innerHTML = renderPostmanPreview(result.endpoints);
-  const total = result.endpoints.reduce((s,e)=>s+e.rules.length,0);
-  document.getElementById('postman-preview').style.display = 'block';
-  document.getElementById('postman-import-btn').disabled = false;
-  document.getElementById('postman-import-btn').style.opacity = '1';
-  toast('Preview: ' + result.endpoints.length + ' endpoint(s), ' + total + ' requests', 'success');
-}
-async function importPostman() {
-  const raw = document.getElementById('postman-json').value.trim();
-  if (!raw) return;
-  let collection;
-  try { collection = JSON.parse(raw); } catch(_) { toast('JSON inválido.', 'error'); return; }
-  const btn = document.getElementById('postman-import-btn');
-  btn.textContent = '⏳ Importando...'; btn.disabled = true;
-  const result = await api('POST', '/api/postman', { collection });
-  btn.textContent = 'Importar'; btn.disabled = false;
-  if (result.error) { toast(result.error, 'error'); return; }
-  const resEl = document.getElementById('postman-result');
-  resEl.style.display = 'block';
-  const total = result.details.reduce((s,e)=>s+e.rules,0);
-  resEl.innerHTML = '✓ <strong>' + esc(result.details[0]?.name || 'Collection') + '</strong> importada!<br>'
-    + result.endpoints + ' endpoint(s) criado(s) · ' + total + ' mock rules';
-  // Reload endpoints list
-  const eps = await api('GET', '/api/endpoints');
-  if (eps && !eps.error) {
-    state.endpoints = eps;
-    renderEndpointList();
-    if (eps.length > 0 && !state.selectedEp) selectEndpoint(eps[eps.length-1].id);
-  }
-  toast('Collection importada: ' + total + ' regras criadas!', 'success');
-}
-function methodColor(m) {
-  return { GET:'#00C8FF', POST:'#00FF87', PUT:'#FFD23F', PATCH:'#FB923C', DELETE:'#FF4D6D' }[m] || '#94A3B8';
-}
-function renderPostmanPreview(endpoints) {
-  return endpoints.map(function(ep) {
-    var rows = ep.rules.map(function(r) {
-      var c = methodColor(r.method);
-      return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)">'
-        + '<span style="font-size:10px;font-weight:700;color:' + c + ';background:' + c + '18;padding:2px 7px;border-radius:4px;min-width:46px;text-align:center">' + esc(r.method) + '</span>'
-        + '<span style="font-size:12px;color:var(--text2);font-family:var(--mono)">' + esc(r.path) + '</span>'
-        + '<span style="margin-left:auto;font-size:11px;color:var(--text3)">' + r.status + '</span>'
-        + '</div>';
-    }).join('');
-    return '<div style="margin-bottom:12px">'
-      + '<div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:6px">📁 ' + esc(ep.name) + '</div>'
-      + rows
-      + '</div>';
-  }).join('');
-}
-
 // ── VERSIONING (via Mock Rules) ───────────────────────────────────────────────
 // API versioning is done with Mock Rules. /v1/users and /v2/users = two different rules.
 // createVersionedRule() pre-fills the rule modal to make it easy.
@@ -4939,7 +4702,7 @@ init();
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     hideCreateModal(); hideRuleModal(); hideCrudModal(); hideCrudDataModal();
-    ['add-row-modal','delay-modal','openapi-modal','faker-modal','postman-modal'].forEach(id => {
+    ['add-row-modal','delay-modal','openapi-modal','faker-modal'].forEach(id => {
       const el = document.getElementById(id); if (el) el.style.display = 'none';
     });
   }
@@ -5004,46 +4767,6 @@ paths:
     <div class="btn-row">
       <button class="btn-cancel" onclick="document.getElementById('openapi-modal').style.display='none'">Cancelar</button>
       <button class="btn-primary" onclick="importOpenAPI()">Importar Spec</button>
-    </div>
-  </div>
-</div>
-
-<!-- ── FAKER SEED MODAL ───────────────────────────────────────────────────── -->
-<div id="postman-modal" class="modal-overlay" style="display:none">
-  <div class="modal" style="width:640px;max-height:85vh;overflow:auto">
-    <div class="modal-row">
-      <h2 class="modal-title" style="margin:0">📦 Import Postman Collection</h2>
-      <button onclick="closePostmanModal()" style="background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer">✕</button>
-    </div>
-    <p style="font-size:12px;color:var(--text3);margin:0 0 16px">No Postman: <strong style="color:var(--text)">Export → Collection v2.1</strong> → cole o JSON abaixo.<br/>Serão criadas <strong style="color:var(--text)">Mock Rules</strong> para cada request da collection.</p>
-
-    <div id="postman-drop-zone" style="border:2px dashed var(--border2);border-radius:10px;padding:32px;text-align:center;cursor:pointer;transition:all .2s;margin-bottom:16px"
-      onclick="document.getElementById('postman-file-input').click()"
-      ondragover="event.preventDefault();this.style.borderColor='var(--green)';this.style.background='#00FF8708'"
-      ondragleave="this.style.borderColor='var(--border2)';this.style.background=''"
-      ondrop="handlePostmanDrop(event)">
-      <div style="font-size:28px;margin-bottom:8px">📂</div>
-      <div style="font-size:13px;color:var(--text2)">Arraste o arquivo <code style="color:var(--green)">.json</code> aqui</div>
-      <div style="font-size:11px;color:var(--text3);margin-top:4px">ou clique para selecionar</div>
-      <input type="file" id="postman-file-input" accept=".json" style="display:none" onchange="handlePostmanFile(this)"/>
-    </div>
-
-    <div style="text-align:center;font-size:11px;color:var(--text3);margin-bottom:12px">— ou cole o JSON diretamente —</div>
-
-    <textarea class="form-textarea" id="postman-json" rows="8" style="font-size:11px" placeholder='{"info":{"name":"Minha API",...},"item":[...]}'></textarea>
-
-    <!-- Preview area -->
-    <div id="postman-preview" style="display:none;margin-top:12px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:16px;max-height:240px;overflow-y:auto">
-      <div style="font-size:11px;color:var(--text3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px">Preview — o que será importado</div>
-      <div id="postman-preview-list"></div>
-    </div>
-
-    <div id="postman-result" style="display:none;background:#0A1A0A;border:1px solid #00FF8733;border-radius:8px;padding:12px;margin-top:12px;font-size:13px;color:var(--green);font-family:var(--mono)"></div>
-
-    <div class="btn-row" style="margin-top:16px">
-      <button class="btn-cancel" onclick="closePostmanModal()">Cancelar</button>
-      <button id="postman-preview-btn" class="btn-secondary" onclick="previewPostman()" style="width:auto;padding:0 16px">👁 Preview</button>
-      <button id="postman-import-btn" class="btn-primary" onclick="importPostman()" disabled style="opacity:.5">Importar</button>
     </div>
   </div>
 </div>
