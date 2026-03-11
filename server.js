@@ -3263,6 +3263,8 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 .modal{background:var(--bg);border:1px solid var(--border2);border-radius:12px;padding:32px;width:500px;max-height:90vh;overflow:auto;box-shadow:0 25px 80px rgba(0,0,0,.8)}
 .revoke-btn{background:none;border:1px solid #2a2a2a;color:#555;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;transition:all .2s;flex-shrink:0}
 .revoke-btn:hover{color:#ff4444;border-color:#ff444433}
+.ws-manage-btn{background:none;border:1px solid var(--border);color:var(--text3);border-radius:4px;padding:4px 8px;font-size:11px;cursor:pointer;transition:all .2s}
+.ws-manage-btn:hover{color:var(--text);border-color:var(--text3)}
 .modal-title{font-size:18px;font-weight:700;color:#fff;margin-bottom:24px}
 .modal-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
 .form-group{margin-bottom:18px}
@@ -4168,14 +4170,16 @@ function renderWsList() {
     const isPersonal = ws.name.includes('(pessoal)');
     const isCurrent = ws.id === wsState.currentWsId;
     const displayName = ws.name.replace(' (pessoal)', '');
-    return '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid ' + (isCurrent ? 'var(--green)' : 'var(--border)') + ';border-radius:8px;background:' + (isCurrent ? '#00FF8708' : 'var(--bg3)') + ';cursor:pointer;transition:all .2s" onclick="switchWorkspace(\'' + ws.id + '\')">'
+    const borderColor = isCurrent ? 'var(--green)' : 'var(--border)';
+    const bg = isCurrent ? '#00FF8708' : 'var(--bg3)';
+    return '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid ' + borderColor + ';border-radius:8px;background:' + bg + ';cursor:pointer;transition:all .2s" onclick="switchWorkspace(' + JSON.stringify(ws.id) + ')">'
       + '<span style="font-size:18px">' + (isPersonal ? '👤' : '🏢') + '</span>'
       + '<div style="flex:1;min-width:0">'
       + '<div style="font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(displayName) + '</div>'
       + '<div style="font-size:11px;color:var(--text3)">' + ws.ep_count + ' endpoint(s) · ' + ws.member_count + ' membro(s) · ' + ws.role + '</div>'
       + '</div>'
       + (isCurrent ? '<span style="font-size:10px;color:var(--green);font-weight:700;letter-spacing:.06em">ATIVO</span>' : '')
-      + (ws.role === 'owner' && !isPersonal ? '<button onclick="event.stopPropagation();openManage(\'' + ws.id + '\')" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:11px;padding:4px 8px;border-radius:4px;border:1px solid var(--border)" onmouseover="this.style.color=\'var(--text)\'" onmouseout="this.style.color=\'var(--text3)\'">⚙ Gerenciar</button>' : '')
+      + (ws.role === 'owner' && !isPersonal ? '<button onclick="event.stopPropagation();openManage(' + JSON.stringify(ws.id) + ')" class="ws-manage-btn">⚙ Gerenciar</button>' : '')
       + '</div>';
   }).join('');
 }
@@ -4209,17 +4213,18 @@ function renderMembers(members, yourRole, wsId) {
   document.getElementById('ws-members-list').innerHTML = members.map(function(m) {
     const isOwner = m.role === 'owner';
     const canEdit = yourRole === 'owner' && !isOwner;
+    const avatar = m.avatar ? '<img src="' + esc(m.avatar) + '" width="28" height="28" style="border-radius:50%;vertical-align:middle">' : '<span style="width:28px;height:28px;border-radius:50%;background:var(--border2);display:inline-flex;align-items:center;justify-content:center;font-size:11px">👤</span>';
     return '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg3);border-radius:8px">'
-      + '<img src="' + esc(m.avatar || '') + '" style="width:28px;height:28px;border-radius:50%;background:var(--border)" onerror="this.style.display=\'none\'">'
+      + avatar
       + '<div style="flex:1;min-width:0">'
       + '<div style="font-size:12px;font-weight:600;color:var(--text)">@' + esc(m.login) + (m.name ? ' · ' + esc(m.name) : '') + '</div>'
       + '</div>'
-      + '<select onchange="changeMemberRole(\'' + wsId + '\',\'' + m.id + '\',this.value)" style="background:var(--bg2);border:1px solid var(--border2);border-radius:4px;color:var(--text);font-size:11px;padding:3px 6px;cursor:pointer" ' + (!canEdit ? 'disabled' : '') + '>'
+      + '<select onchange="changeMemberRole(' + JSON.stringify(wsId) + ',' + JSON.stringify(m.id) + ',this.value)" style="background:var(--bg2);border:1px solid var(--border2);border-radius:4px;color:var(--text);font-size:11px;padding:3px 6px;cursor:pointer" ' + (!canEdit ? 'disabled' : '') + '>'
       + '<option value="owner" ' + (m.role==='owner'?'selected':'') + '>Owner</option>'
       + '<option value="editor" ' + (m.role==='editor'?'selected':'') + '>Editor</option>'
       + '<option value="viewer" ' + (m.role==='viewer'?'selected':'') + '>Viewer</option>'
       + '</select>'
-      + (canEdit ? '<button onclick="removeMember(\'' + wsId + '\',\'' + m.id + '\')" style="background:none;border:none;color:#FF4D6D;cursor:pointer;font-size:16px;padding:0 2px" title="Remover">×</button>' : '')
+      + (canEdit ? '<button onclick="removeMember(' + JSON.stringify(wsId) + ',' + JSON.stringify(m.id) + ')" style="background:none;border:none;color:#FF4D6D;cursor:pointer;font-size:16px;padding:0 4px" title="Remover">×</button>' : '')
       + '</div>';
   }).join('');
 }
