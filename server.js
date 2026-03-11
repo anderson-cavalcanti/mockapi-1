@@ -3265,6 +3265,8 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 .revoke-btn:hover{color:#ff4444;border-color:#ff444433}
 .ws-manage-btn{background:none;border:1px solid var(--border);color:var(--text3);border-radius:4px;padding:4px 8px;font-size:11px;cursor:pointer;transition:all .2s}
 .ws-manage-btn:hover{color:var(--text);border-color:var(--text3)}
+.ws-remove-btn{background:none;border:none;color:#555;cursor:pointer;font-size:18px;line-height:1;padding:0 4px;flex-shrink:0;transition:color .15s}
+.ws-remove-btn:hover{color:#FF4D6D}
 .modal-title{font-size:18px;font-weight:700;color:#fff;margin-bottom:24px}
 .modal-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
 .form-group{margin-bottom:18px}
@@ -4250,7 +4252,7 @@ async function openManage(wsId) {
         + '<option value="editor"' + (m.role==='editor'?' selected':'') + '>Editor</option>'
         + '<option value="viewer"' + (m.role==='viewer'?' selected':'') + '>Viewer</option>'
         + '</select>'
-        + (canEdit ? '<button onclick="removeMember(' + JSON.stringify(wsId) + ',' + JSON.stringify(m.id) + ')" title="Remover membro" style="background:none;border:none;color:#555;cursor:pointer;font-size:18px;line-height:1;padding:0 2px;flex-shrink:0;transition:color .15s" onmouseover="this.style.color=\'#FF4D6D\'" onmouseout="this.style.color=\'#555\'">×</button>' : '<span style="width:22px"></span>')
+        + (canEdit ? '<button onclick="removeMember(' + JSON.stringify(wsId) + ',' + JSON.stringify(m.id) + ')" title="Remover membro" class="ws-remove-btn">×</button>' : '<span style="width:22px"></span>')
         + '</div>';
     }).join('');
   }
