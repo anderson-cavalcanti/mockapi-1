@@ -30,9 +30,9 @@ process.emit = function(name, data) {
   return origEmit.apply(process, arguments);
 };
 
-const db     = require('./db.js');
-const faker  = require('./faker.js');
-const { parseOpenAPI } = require('./openapi.js');
+const db     = require('../db.js');
+const faker  = require('../faker.js');
+const { parseOpenAPI } = require('../openapi.js');
 
 function genId(len = 6) {
   return crypto.randomBytes(len).toString('hex').toUpperCase().slice(0, len);
@@ -675,7 +675,7 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
 
   // ── ENDPOINTS (with auth filter)
   if (method === 'GET' && pathname === '/api/endpoints') {
-    const user = getSessionUser(req) || getTokenUser(req);
+    const user = getSessionUser(req);
     return json(res, db.getAllEndpoints(user ? user.id : null));
   }
   if (method === 'POST' && pathname === '/api/endpoints') {

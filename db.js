@@ -120,6 +120,33 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_api_tokens_token ON api_tokens(token);
   CREATE INDEX IF NOT EXISTS idx_api_tokens_user  ON api_tokens(user_id);
+  CREATE TABLE IF NOT EXISTS workspaces (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    owner_id    TEXT NOT NULL,
+    created_at  TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE TABLE IF NOT EXISTS workspace_members (
+    workspace_id TEXT NOT NULL,
+    user_id      TEXT NOT NULL,
+    role         TEXT DEFAULT 'viewer',
+    invited_by   TEXT,
+    joined_at    TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (workspace_id, user_id),
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id)      REFERENCES users(id)      ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_wm_user      ON workspace_members(user_id);
+  CREATE INDEX IF NOT EXISTS idx_ep_workspace ON endpoints(workspace_id);
+  CREATE TABLE IF NOT EXISTS workspace_invites (
+    id           TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    github_login TEXT NOT NULL,
+    invited_by   TEXT NOT NULL,
+    created_at   TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+  );
   CREATE TABLE IF NOT EXISTS plan_config (
     plan        TEXT PRIMARY KEY,
     ep_limit    INTEGER NOT NULL,
@@ -141,6 +168,26 @@ const insertPlan = db.prepare(`INSERT OR IGNORE INTO plan_config (plan,ep_limit,
 for (const p of planSeeds) insertPlan.run(p.plan, p.ep_limit, p.req_per_day, p.label, p.enabled, p.price_brl);
 
 try { db.exec(`ALTER TABLE endpoints ADD COLUMN user_id TEXT`); } catch(_) {}
+try { db.exec(`ALTER TABLE endpoints ADD COLUMN workspace_id TEXT`); } catch(_) {}
+
+// Migrate: create personal workspace for users who don't have one yet
+// and assign their orphaned endpoints to it
+const migrateWorkspaces = db.transaction(() => {
+  const usersWithoutWs = db.prepare(`
+    SELECT DISTINCT u.id, u.login FROM users u
+    WHERE NOT EXISTS (
+      SELECT 1 FROM workspaces w WHERE w.owner_id = u.id AND w.name LIKE '%(pessoal)%' OR w.name = u.login
+    )
+  `).all();
+  for (const u of usersWithoutWs) {
+    const wsId = require('crypto').randomBytes(6).toString('hex').toUpperCase();
+    db.prepare(`INSERT OR IGNORE INTO workspaces (id,name,owner_id) VALUES (?,?,?)`).run(wsId, u.login + ' (pessoal)', u.id);
+    db.prepare(`INSERT OR IGNORE INTO workspace_members (workspace_id,user_id,role) VALUES (?,?,'owner')`).run(wsId, u.id);
+    // Assign orphaned endpoints (no workspace_id) to this personal workspace
+    db.prepare(`UPDATE endpoints SET workspace_id=? WHERE user_id=? AND (workspace_id IS NULL OR workspace_id='')`).run(wsId, u.id);
+  }
+});
+try { migrateWorkspaces(); } catch(e) { console.warn('[db] workspace migration:', e.message); }
 
 function safeJSON(s) { try { return JSON.parse(s); } catch(_) { return s||null; } }
 function safeStr(v)  { return typeof v==='string'?v:JSON.stringify(v)||null; }
@@ -154,7 +201,8 @@ function rowToUser(r) {
 }
 function rowToEndpoint(r) {
   if (!r) return null;
-  return { id:r.id, userId:r.user_id||null, name:r.name, path:r.path,
+  return { id:r.id, userId:r.user_id||null, workspaceId:r.workspace_id||null,
+           name:r.name, path:r.path,
            corsEnabled:!!r.cors, globalDelay:r.global_delay||0,
            rateLimit:r.rate_limit||100, requestCount:r.req_count||0, createdAt:r.created_at };
 }
@@ -213,14 +261,20 @@ module.exports = {
   cleanExpiredSessions() { db.prepare(`DELETE FROM sessions WHERE expires_at<=datetime('now')`).run(); },
 
   // ENDPOINTS
-  getAllEndpoints(userId) {
+  getAllEndpoints(userId, workspaceId) {
+    if (workspaceId) {
+      // Return endpoints belonging to the workspace (if user is a member)
+      return db.prepare(`SELECT e.* FROM endpoints e
+        JOIN workspace_members wm ON wm.workspace_id=e.workspace_id AND wm.user_id=?
+        WHERE e.workspace_id=? ORDER BY e.created_at DESC`).all(userId, workspaceId).map(rowToEndpoint);
+    }
     if (userId) return db.prepare(`SELECT * FROM endpoints WHERE user_id=? ORDER BY created_at DESC`).all(userId).map(rowToEndpoint);
     return db.prepare(`SELECT * FROM endpoints ORDER BY created_at DESC`).all().map(rowToEndpoint);
   },
   getEndpoint(id)  { return rowToEndpoint(db.prepare(`SELECT * FROM endpoints WHERE id=?`).get(id)); },
   saveEndpoint(ep) {
-    db.prepare(`INSERT OR REPLACE INTO endpoints (id,user_id,name,path,cors,global_delay,rate_limit,req_count,created_at) VALUES (?,?,?,?,?,?,?,?,?)`
-    ).run(ep.id,ep.userId||null,ep.name,ep.path||null,ep.corsEnabled?1:0,ep.globalDelay||0,ep.rateLimit||100,ep.requestCount||0,ep.createdAt||new Date().toISOString());
+    db.prepare(`INSERT OR REPLACE INTO endpoints (id,user_id,workspace_id,name,path,cors,global_delay,rate_limit,req_count,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`
+    ).run(ep.id,ep.userId||null,ep.workspaceId||null,ep.name,ep.path||null,ep.corsEnabled?1:0,ep.globalDelay||0,ep.rateLimit||100,ep.requestCount||0,ep.createdAt||new Date().toISOString());
   },
   patchEndpoint(id,fields) {
     const sets=[],vals=[];
@@ -357,6 +411,79 @@ module.exports = {
   },
   deleteApiToken(id, userId) {
     db.prepare(`DELETE FROM api_tokens WHERE id=? AND user_id=?`).run(id, userId);
+  },
+
+  // ── WORKSPACES ────────────────────────────────────────────────────────────
+  createWorkspace(id, name, ownerId) {
+    db.prepare(`INSERT INTO workspaces (id,name,owner_id) VALUES (?,?,?)`).run(id, name, ownerId);
+    db.prepare(`INSERT OR IGNORE INTO workspace_members (workspace_id,user_id,role) VALUES (?,?,'owner')`).run(id, ownerId);
+    return db.prepare(`SELECT * FROM workspaces WHERE id=?`).get(id);
+  },
+  getWorkspace(id) { return db.prepare(`SELECT * FROM workspaces WHERE id=?`).get(id); },
+  getUserWorkspaces(userId) {
+    return db.prepare(`
+      SELECT w.*, wm.role,
+        (SELECT COUNT(*) FROM endpoints e WHERE e.workspace_id=w.id) as ep_count,
+        (SELECT COUNT(*) FROM workspace_members wm2 WHERE wm2.workspace_id=w.id) as member_count
+      FROM workspaces w
+      JOIN workspace_members wm ON wm.workspace_id=w.id AND wm.user_id=?
+      ORDER BY w.created_at ASC`).all(userId);
+  },
+  renameWorkspace(id, name, userId) {
+    db.prepare(`UPDATE workspaces SET name=? WHERE id=? AND owner_id=?`).run(name, id, userId);
+  },
+  deleteWorkspace(id, userId) {
+    // Only owner can delete; personal workspace cannot be deleted
+    const ws = db.prepare(`SELECT * FROM workspaces WHERE id=? AND owner_id=?`).get(id, userId);
+    if (!ws) return false;
+    db.prepare(`DELETE FROM workspaces WHERE id=?`).run(id);
+    return true;
+  },
+  getWorkspaceMembers(wsId) {
+    return db.prepare(`
+      SELECT u.id, u.login, u.name, u.avatar, wm.role, wm.joined_at
+      FROM workspace_members wm
+      JOIN users u ON u.id=wm.user_id
+      WHERE wm.workspace_id=?
+      ORDER BY wm.role='owner' DESC, wm.joined_at ASC`).all(wsId);
+  },
+  getWorkspaceMember(wsId, userId) {
+    return db.prepare(`SELECT * FROM workspace_members WHERE workspace_id=? AND user_id=?`).get(wsId, userId);
+  },
+  addWorkspaceMember(wsId, userId, role, invitedBy) {
+    db.prepare(`INSERT OR REPLACE INTO workspace_members (workspace_id,user_id,role,invited_by,joined_at) VALUES (?,?,?,?,datetime('now'))`).run(wsId, userId, role||'editor', invitedBy||null);
+  },
+  updateMemberRole(wsId, userId, role) {
+    db.prepare(`UPDATE workspace_members SET role=? WHERE workspace_id=? AND user_id=?`).run(role, wsId, userId);
+  },
+  removeWorkspaceMember(wsId, userId) {
+    db.prepare(`DELETE FROM workspace_members WHERE workspace_id=? AND user_id=?`).run(wsId, userId);
+  },
+  // Personal workspace — the one auto-created for each user
+  getPersonalWorkspace(userId) {
+    return db.prepare(`SELECT w.* FROM workspaces w WHERE w.owner_id=? ORDER BY w.created_at ASC LIMIT 1`).get(userId);
+  },
+  ensurePersonalWorkspace(userId, login) {
+    const existing = db.prepare(`SELECT w.* FROM workspaces w WHERE w.owner_id=? ORDER BY w.created_at ASC LIMIT 1`).get(userId);
+    if (existing) return existing;
+    const wsId = require('crypto').randomBytes(6).toString('hex').toUpperCase();
+    db.prepare(`INSERT OR IGNORE INTO workspaces (id,name,owner_id) VALUES (?,?,?)`).run(wsId, login + ' (pessoal)', userId);
+    db.prepare(`INSERT OR IGNORE INTO workspace_members (workspace_id,user_id,role) VALUES (?,?,'owner')`).run(wsId, userId);
+    db.prepare(`UPDATE endpoints SET workspace_id=? WHERE user_id=? AND (workspace_id IS NULL OR workspace_id='')`).run(wsId, userId);
+    return db.prepare(`SELECT * FROM workspaces WHERE id=?`).get(wsId);
+  },
+  // Pending invites
+  createInvite(wsId, githubLogin, invitedBy) {
+    const id = require('crypto').randomBytes(5).toString('hex').toUpperCase();
+    db.prepare(`INSERT OR REPLACE INTO workspace_invites (id,workspace_id,github_login,invited_by) VALUES (?,?,?,?)`).run(id, wsId, githubLogin.toLowerCase(), invitedBy);
+    return id;
+  },
+  getPendingInvitesByLogin(login) {
+    return db.prepare(`SELECT wi.*, w.name as workspace_name, u.login as inviter_login FROM workspace_invites wi JOIN workspaces w ON w.id=wi.workspace_id JOIN users u ON u.id=wi.invited_by WHERE LOWER(wi.github_login)=LOWER(?)`).all(login);
+  },
+  deleteInvite(id) { db.prepare(`DELETE FROM workspace_invites WHERE id=?`).run(id); },
+  getPendingInvitesForWorkspace(wsId) {
+    return db.prepare(`SELECT * FROM workspace_invites WHERE workspace_id=?`).all(wsId);
   },
 
   raw: db,

@@ -278,6 +278,7 @@ module.exports = {
 
   // RULES
   getRules(epId) { return db.prepare(`SELECT * FROM rules WHERE endpoint_id=? ORDER BY created_at DESC`).all(epId).map(rowToRule); },
+  getRule(id)    { const r = db.prepare(`SELECT * FROM rules WHERE id=?`).get(id); return r ? rowToRule(r) : null; },
   saveRule(r) {
     db.prepare(`INSERT INTO rules VALUES (?,?,?,?,?,?,?,?)`
     ).run(r.id,r.endpointId,r.method||'*',r.path||'/*',r.status||200,r.delay||0,r.body||null,r.createdAt||new Date().toISOString());

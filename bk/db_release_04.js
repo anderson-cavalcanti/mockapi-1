@@ -109,7 +109,36 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_requests_ep    ON requests(endpoint_id);
   CREATE INDEX IF NOT EXISTS idx_requests_ts    ON requests(ts);
   CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
+  CREATE TABLE IF NOT EXISTS api_tokens (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    token       TEXT UNIQUE NOT NULL,
+    last_used   TEXT,
+    created_at  TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_api_tokens_token ON api_tokens(token);
+  CREATE INDEX IF NOT EXISTS idx_api_tokens_user  ON api_tokens(user_id);
+  CREATE TABLE IF NOT EXISTS plan_config (
+    plan        TEXT PRIMARY KEY,
+    ep_limit    INTEGER NOT NULL,
+    req_per_day INTEGER NOT NULL,
+    label       TEXT NOT NULL,
+    enabled     INTEGER DEFAULT 1,
+    price_brl   INTEGER DEFAULT 0
+  );
 `);
+
+// Seed default plan config if not exists
+const planSeeds = [
+  { plan:'free',       ep_limit:3,          req_per_day:1000,    label:'Free',       enabled:1, price_brl:0   },
+  { plan:'pro',        ep_limit:50,         req_per_day:100000,  label:'Pro',        enabled:1, price_brl:59  },
+  { plan:'team',       ep_limit:200,        req_per_day:1000000, label:'Team',       enabled:1, price_brl:199 },
+  { plan:'enterprise', ep_limit:999999,     req_per_day:999999999,label:'Enterprise',enabled:1, price_brl:0  },
+];
+const insertPlan = db.prepare(`INSERT OR IGNORE INTO plan_config (plan,ep_limit,req_per_day,label,enabled,price_brl) VALUES (?,?,?,?,?,?)`);
+for (const p of planSeeds) insertPlan.run(p.plan, p.ep_limit, p.req_per_day, p.label, p.enabled, p.price_brl);
 
 try { db.exec(`ALTER TABLE endpoints ADD COLUMN user_id TEXT`); } catch(_) {}
 
@@ -202,6 +231,23 @@ module.exports = {
   deleteEndpoint(id) { db.prepare(`DELETE FROM endpoints WHERE id=?`).run(id); },
   incrementCount(id) { db.prepare(`UPDATE endpoints SET req_count=req_count+1 WHERE id=?`).run(id); },
   countEndpoints()   { return db.prepare(`SELECT COUNT(*) as n FROM endpoints`).get()?.n||0; },
+  // Plan config (admin-managed)
+  getPlanConfig(plan) {
+    const row = db.prepare(`SELECT * FROM plan_config WHERE plan=?`).get(plan);
+    if (!row) return { plan, ep_limit:3, req_per_day:1000, label:plan, enabled:1, price_brl:0 };
+    return row;
+  },
+  getAllPlanConfigs() { return db.prepare(`SELECT * FROM plan_config ORDER BY price_brl`).all(); },
+  updatePlanConfig(plan, fields) {
+    const sets=[],vals=[];
+    if (fields.ep_limit    !==undefined){sets.push('ep_limit=?');    vals.push(fields.ep_limit);}
+    if (fields.req_per_day !==undefined){sets.push('req_per_day=?'); vals.push(fields.req_per_day);}
+    if (fields.label       !==undefined){sets.push('label=?');       vals.push(fields.label);}
+    if (fields.enabled     !==undefined){sets.push('enabled=?');     vals.push(fields.enabled?1:0);}
+    if (fields.price_brl   !==undefined){sets.push('price_brl=?');   vals.push(fields.price_brl);}
+    if (sets.length) { vals.push(plan); db.prepare(`UPDATE plan_config SET ${sets.join(',')} WHERE plan=?`).run(...vals); }
+    return db.prepare(`SELECT * FROM plan_config WHERE plan=?`).get(plan);
+  },
   countUserEndpoints(userId) { return db.prepare(`SELECT COUNT(*) as n FROM endpoints WHERE user_id=?`).get(userId)?.n||0; },
   countUserReqsToday(userId) {
     return db.prepare(
@@ -292,6 +338,24 @@ module.exports = {
       usersByPlan:    db.prepare(`SELECT plan,COUNT(*) as n FROM users GROUP BY plan`).all(),
       totalRules:     db.prepare(`SELECT COUNT(*) as n FROM rules`).get()?.n||0,
     };
+  },
+
+  // ── API TOKENS ────────────────────────────────────────────────────────────
+  createApiToken(userId, name, token) {
+    const id = require('crypto').randomBytes(6).toString('hex').toUpperCase();
+    db.prepare(`INSERT INTO api_tokens (id,user_id,name,token) VALUES (?,?,?,?)`).run(id, userId, name, token);
+    return db.prepare(`SELECT * FROM api_tokens WHERE id=?`).get(id);
+  },
+  getApiToken(token) {
+    const row = db.prepare(`SELECT * FROM api_tokens WHERE token=?`).get(token);
+    if (row) db.prepare(`UPDATE api_tokens SET last_used=datetime('now') WHERE token=?`).run(token);
+    return row;
+  },
+  listApiTokens(userId) {
+    return db.prepare(`SELECT id,name,substr(token,1,8)||'...' as token_preview,last_used,created_at FROM api_tokens WHERE user_id=? ORDER BY created_at DESC`).all(userId);
+  },
+  deleteApiToken(id, userId) {
+    db.prepare(`DELETE FROM api_tokens WHERE id=? AND user_id=?`).run(id, userId);
   },
 
   raw: db,

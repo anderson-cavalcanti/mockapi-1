@@ -30,108 +30,15 @@ process.emit = function(name, data) {
   return origEmit.apply(process, arguments);
 };
 
-const db     = require('./db.js');
-const faker  = require('./faker.js');
-const { parseOpenAPI } = require('./openapi.js');
+const db     = require('../db.js');
+const faker  = require('../faker.js');
+const { parseOpenAPI } = require('../openapi.js');
 
 function genId(len = 6) {
   return crypto.randomBytes(len).toString('hex').toUpperCase().slice(0, len);
 }
 
-// ── POSTMAN COLLECTION PARSER ─────────────────────────────────────────────────
-function parsePostmanCollection(col, user, existingEpId) {
-  // Support both wrapped { collection: {...} } and raw collection object
-  const c = col.info ? col : col.collection || col;
-  if (!c || !c.info) throw new Error('Formato de collection inválido. Export como Collection v2.0 ou v2.1.');
-
-  const colName = c.info.name || 'Postman Import';
-  const endpoints = [];
-
-  // Flatten items (supports nested folders)
-  function flattenItems(items, prefix = '') {
-    const rules = [];
-    for (const item of (items || [])) {
-      if (item.item) {
-        // Folder — recurse
-        const folderName = item.name ? `${prefix}/${item.name}`.replace(/\/+/g,'/') : prefix;
-        rules.push(...flattenItems(item.item, folderName));
-      } else if (item.request) {
-        // Request item
-        const req = item.request;
-        const method = (typeof req === 'string' ? 'GET' : req.method || 'GET').toUpperCase();
-        // Extract path — strip host/protocol/variables
-        let rawUrl = '';
-        if (req.url) {
-          rawUrl = typeof req.url === 'string' ? req.url
-                  : (req.url.raw || (req.url.path || []).join('/'));
-        }
-        // Remove protocol + host, keep path only
-        rawUrl = rawUrl.replace(/^https?:\/\/[^\/]+/, '').replace(/\{\{[^}]+\}\}/g, '').replace(/^\/+/, '/') || '/';
-        // Remove query string
-        const path = rawUrl.split('?')[0] || '/';
-        // Extract example response body
-        let status = 200;
-        let body = '{"ok":true}';
-        // 1. Try example response first
-        if (item.response && item.response.length > 0) {
-          const ex = item.response[0];
-          status = parseInt(ex.status || ex.code || 200) || 200;
-          if (ex.body) {
-            try { JSON.parse(ex.body); body = ex.body; } catch(_) { body = JSON.stringify({ message: ex.body }); }
-          }
-        }
-        // 2. If no example response body, use request body as template
-        if (body === '{"ok":true}' && req.body) {
-          let reqBody = '';
-          if (req.body.mode === 'raw' && req.body.raw) {
-            reqBody = req.body.raw;
-          } else if (req.body.mode === 'formdata' && req.body.formdata) {
-            const obj = {};
-            (req.body.formdata || []).forEach(f => { if (f.key) obj[f.key] = f.value || ''; });
-            reqBody = JSON.stringify(obj, null, 2);
-          }
-          if (reqBody) {
-            try { JSON.parse(reqBody); body = reqBody; } catch(_) { body = JSON.stringify({ raw: reqBody }); }
-          }
-        }
-        rules.push({ method, path, status, body, name: item.name || `${method} ${path}` });
-      }
-    }
-    return rules;
-  }
-
-  const allRules = flattenItems(c.item);
-  if (allRules.length === 0) throw new Error('Nenhum request encontrado na collection.');
-
-  // Group rules into a single endpoint (or use existing)
-  const epId = existingEpId || genId();
-  const ep = {
-    id: epId,
-    userId: user ? user.id : null,
-    name: colName,
-    path: `/${epId}`,
-    corsEnabled: true,
-    globalDelay: 0,
-    rateLimit: 100,
-    requestCount: 0,
-    createdAt: new Date().toISOString(),
-    _rules: allRules.map(r => ({
-      id: genId(),
-      endpointId: epId,
-      method: r.method,
-      path: r.path,
-      status: r.status,
-      delay: 0,
-      body: r.body,
-      createdAt: new Date().toISOString(),
-    }))
-  };
-  endpoints.push(ep);
-
-  return { name: colName, endpoints };
-}
-
-
+// ── AUTH CONFIG ───────────────────────────────────────────────────────────────
 const GITHUB_CLIENT_ID     = process.env.GITHUB_CLIENT_ID     || '';
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || '';
 const SESSION_SECRET       = process.env.SESSION_SECRET       || 'dev_secret_change_me';
@@ -185,18 +92,9 @@ function getSessionUser(req) {
   return db.getUserById(session.userId);
 }
 
-function getTokenUser(req) {
-  const auth = req.headers['authorization'] || '';
-  const match = auth.match(/^Bearer\s+(.+)$/i);
-  if (!match) return null;
-  const row = db.getApiToken(match[1]);
-  if (!row) return null;
-  return db.getUserById(row.user_id);
-}
-
 function requireAuth(req, res) {
-  const user = getSessionUser(req) || getTokenUser(req);
-  if (!user) { res.writeHead(401, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Unauthorized'})); return null; }
+  const user = getSessionUser(req);
+  if (!user) { res.writeHead(302, { Location: '/login' }); res.end(); return null; }
   if (user.banned) { res.writeHead(403, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Account banned'})); return null; }
   return user;
 }
@@ -209,15 +107,6 @@ function requireAdmin(req, res) {
 }
 
 setInterval(() => db.cleanExpiredSessions(), 60 * 60 * 1000);
-
-// ── KEEP-ALIVE (Render free tier sleeps after 15min) ─────────────────────────
-if (process.env.RENDER_EXTERNAL_URL) {
-  const pingUrl = process.env.RENDER_EXTERNAL_URL + '/health';
-  setInterval(() => {
-    require('https').get(pingUrl, () => {}).on('error', () => {});
-  }, 10 * 60 * 1000); // every 10 min
-  console.log('[keep-alive] Pinging', pingUrl, 'every 10min');
-}
 
 // ── WEBSOCKET (RFC 6455) ──────────────────────────────────────────────────────
 const wsClients = new Set();
@@ -430,15 +319,6 @@ async function handleRequest(req, res) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(getDocsHTML(getBaseUrl(req)));
     } catch(e) { res.writeHead(500); res.end('Docs error: ' + e.message); }
-    return;
-  }
-
-  // ── SDK LANDING PAGE
-  if (method === 'GET' && pathname === '/sdk') {
-    try {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(getSdkLandingHTML(getBaseUrl(req)));
-    } catch(e) { res.writeHead(500); res.end('SDK page error: ' + e.message); }
     return;
   }
 
@@ -659,44 +539,16 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
     res.end(); return;
   }
 
-  // ── API TOKENS ────────────────────────────────────────────────────────────────
-  if (method === 'GET' && pathname === '/api/tokens') {
-    const user = requireAuth(req, res);
-    if (!user) return;
-    return json(res, db.listApiTokens(user.id));
-  }
-  if (method === 'POST' && pathname === '/api/tokens') {
-    const user = requireAuth(req, res);
-    if (!user) return;
-    const body = await readBody(req);
-    let data = {}; try { data = JSON.parse(body); } catch(_) {}
-    const name = (data.name || 'Token ' + Date.now()).slice(0, 60);
-    const crypto = require('crypto');
-    const token = 'mapi_' + crypto.randomBytes(24).toString('hex');
-    const row = db.createApiToken(user.id, name, token);
-    return json(res, { ...row, token });
-  }
-  const tokenDelMatch = pathname.match(/^\/api\/tokens\/([A-F0-9]+)$/);
-  if (method === 'DELETE' && tokenDelMatch) {
-    const user = requireAuth(req, res);
-    if (!user) return;
-    db.deleteApiToken(tokenDelMatch[1], user.id);
-    return json(res, { ok: true });
-  }
-
   // ── AUTH: Current user info
   if (method === 'GET' && pathname === '/api/me') {
     const user = getSessionUser(req);
     if (!user) return json(res, { loggedIn: false, authEnabled: AUTH_ENABLED });
-    // Ensure personal workspace exists (idempotent migration)
-    const personalWs = db.ensurePersonalWorkspace(user.id, user.login);
     const limits = getPlanLimits(user.plan);
     const epCount  = db.countUserEndpoints(user.id);
     const reqToday = db.countUserReqsToday(user.id);
     return json(res, { loggedIn: true, authEnabled: AUTH_ENABLED, user: {
       id: user.id, login: user.login, name: user.name,
       avatar: user.avatar, plan: user.plan, isAdmin: user.isAdmin,
-      personalWorkspaceId: personalWs?.id || null,
       limits: {
         endpoints:    { used: epCount,  max: limits.endpoints,  pct: limits.endpoints === Infinity ? 0 : Math.round(epCount/limits.endpoints*100) },
         reqPerDay:    { used: reqToday, max: limits.reqPerDay,  pct: limits.reqPerDay === Infinity  ? 0 : Math.round(reqToday/limits.reqPerDay*100) },
@@ -771,7 +623,7 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
 
   // ── ENDPOINTS (with auth filter)
   if (method === 'GET' && pathname === '/api/endpoints') {
-    const user = getSessionUser(req) || getTokenUser(req);
+    const user = getSessionUser(req);
     return json(res, db.getAllEndpoints(user ? user.id : null));
   }
   if (method === 'POST' && pathname === '/api/endpoints') {
@@ -785,25 +637,11 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
     const body = await readBody(req);
     let data = {}; try { data = JSON.parse(body); } catch(_) {}
     const id = genId();
-    // Resolve workspace: use provided workspaceId or fall back to personal workspace
-    let workspaceId = data.workspaceId || null;
-    if (!workspaceId && user) {
-      const personal = db.ensurePersonalWorkspace(user.id, user.login);
-      workspaceId = personal?.id || null;
-    }
-    const ep = { id, userId: user ? user.id : null, workspaceId,
+    const ep = { id, userId: user ? user.id : null,
                  name: data.name || `Endpoint ${id}`, path: data.path || `/${id}`,
                  corsEnabled: data.corsEnabled !== false, globalDelay: parseInt(data.globalDelay)||0,
                  rateLimit: parseInt(data.rateLimit)||100, requestCount: 0, createdAt: new Date().toISOString() };
     db.saveEndpoint(ep);
-    // Auto-init CRUD table when crud:true (SDK usage)
-    if (data.crud !== false) {
-      const crudPath = '/' + (data.name || id).toLowerCase().replace(/\s+/g, '-');
-      const tableKey = id + crudPath;
-      db.saveCrudTable(tableKey, id, crudPath, data.idField || 'id');
-      ep.crudPath = crudPath;
-      ep.tableKey = tableKey;
-    }
     broadcast(null, 'endpoint_created', ep);
     return json(res, ep, 201);
   }
@@ -853,16 +691,6 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
     db.deleteRule(delRuleMatch[2]);
     broadcast(delRuleMatch[1], 'rule_deleted', { id: delRuleMatch[2] });
     return json(res, { ok: true });
-  }
-  if (method === 'PATCH' && delRuleMatch) {
-    const body = await readBody(req);
-    let data = {}; try { data = JSON.parse(body); } catch(_) {}
-    const existing = db.getRule(delRuleMatch[2]);
-    if (!existing) return json(res, { error: 'Rule not found' }, 404);
-    const updated = { ...existing, ...data, id: existing.id, endpointId: existing.endpointId };
-    db.saveRule(updated);
-    broadcast(delRuleMatch[1], 'rule_updated', updated);
-    return json(res, updated);
   }
 
   // ── CRUD TABLE MANAGEMENT
@@ -980,190 +808,6 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
         tablesCreated++;
       }
       return json(res, { ok: true, title: parsed.title, rulesCreated, tablesCreated, crudPaths: parsed.crudPaths });
-    } catch(e) {
-      return json(res, { error: e.message }, 400);
-    }
-  }
-
-  // ── WORKSPACES ────────────────────────────────────────────────────────────
-  // GET  /api/workspaces           → list user's workspaces
-  // POST /api/workspaces           → create workspace
-  if (pathname === '/api/workspaces') {
-    const user = requireAuth(req, res); if (!user) return;
-    if (method === 'GET') {
-      const workspaces = db.getUserWorkspaces(user.id);
-      return json(res, workspaces);
-    }
-    if (method === 'POST') {
-      const body = await readBody(req);
-      let data = {}; try { data = JSON.parse(body); } catch(_) {}
-      if (!data.name?.trim()) return json(res, { error: 'name required' }, 400);
-      const wsId = genId();
-      const ws = db.createWorkspace(wsId, data.name.trim(), user.id);
-      return json(res, ws, 201);
-    }
-  }
-
-  // GET    /api/workspaces/:id           → workspace details + members
-  // PATCH  /api/workspaces/:id           → rename
-  // DELETE /api/workspaces/:id           → delete (owner only)
-  const wsMatch = pathname.match(/^\/api\/workspaces\/([A-Z0-9]+)$/);
-  if (wsMatch) {
-    const user = requireAuth(req, res); if (!user) return;
-    const wsId = wsMatch[1];
-    const ws = db.getWorkspace(wsId);
-    if (!ws) return json(res, { error: 'Workspace not found' }, 404);
-    const membership = db.getWorkspaceMember(wsId, user.id);
-    if (!membership && !user.isAdmin) return json(res, { error: 'Forbidden' }, 403);
-
-    if (method === 'GET') {
-      const members = db.getWorkspaceMembers(wsId);
-      const pending = db.getPendingInvitesForWorkspace(wsId);
-      return json(res, { ...ws, members, pending, yourRole: membership?.role || 'viewer' });
-    }
-    if (method === 'PATCH') {
-      if (membership?.role !== 'owner' && !user.isAdmin) return json(res, { error: 'Only owner can rename' }, 403);
-      const body = await readBody(req); let data = {}; try { data = JSON.parse(body); } catch(_) {}
-      if (data.name) db.renameWorkspace(wsId, data.name.trim(), user.id);
-      return json(res, db.getWorkspace(wsId));
-    }
-    if (method === 'DELETE') {
-      if (ws.owner_id !== user.id && !user.isAdmin) return json(res, { error: 'Only owner can delete' }, 403);
-      const personal = db.getPersonalWorkspace(user.id);
-      if (personal?.id === wsId) return json(res, { error: 'Cannot delete personal workspace' }, 400);
-      db.deleteWorkspace(wsId, user.id);
-      return json(res, { ok: true });
-    }
-  }
-
-  // GET    /api/workspaces/:id/members         → list members
-  // POST   /api/workspaces/:id/members/invite  → invite by github login
-  const wsMembersMatch = pathname.match(/^\/api\/workspaces\/([A-Z0-9]+)\/members$/);
-  if (wsMembersMatch) {
-    const user = requireAuth(req, res); if (!user) return;
-    const wsId = wsMembersMatch[1];
-    const membership = db.getWorkspaceMember(wsId, user.id);
-    if (!membership && !user.isAdmin) return json(res, { error: 'Forbidden' }, 403);
-    if (method === 'GET') return json(res, db.getWorkspaceMembers(wsId));
-  }
-
-  const wsInviteMatch = pathname.match(/^\/api\/workspaces\/([A-Z0-9]+)\/invite$/);
-  if (method === 'POST' && wsInviteMatch) {
-    const user = requireAuth(req, res); if (!user) return;
-    const wsId = wsInviteMatch[1];
-    const ws = db.getWorkspace(wsId);
-    if (!ws) return json(res, { error: 'Workspace not found' }, 404);
-    const membership = db.getWorkspaceMember(wsId, user.id);
-    if (membership?.role !== 'owner' && !user.isAdmin) return json(res, { error: 'Only owner can invite' }, 403);
-    const body = await readBody(req); let data = {}; try { data = JSON.parse(body); } catch(_) {}
-    const login = data.github_login?.trim().toLowerCase();
-    if (!login) return json(res, { error: 'github_login required' }, 400);
-    // Check if user already exists in system
-    const invitee = db.raw.prepare(`SELECT * FROM users WHERE LOWER(login)=?`).get(login);
-    if (invitee) {
-      const alreadyMember = db.getWorkspaceMember(wsId, invitee.id);
-      if (alreadyMember) return json(res, { error: login + ' já é membro' }, 409);
-      db.addWorkspaceMember(wsId, invitee.id, data.role || 'editor', user.id);
-      return json(res, { ok: true, added: true, user: { id: invitee.id, login: invitee.login, avatar: invitee.avatar } });
-    }
-    // User hasn't logged in yet — create pending invite
-    const inviteId = db.createInvite(wsId, login, user.id);
-    return json(res, { ok: true, added: false, pending: true, inviteId, message: login + ' será adicionado quando fizer login' });
-  }
-
-  // PATCH  /api/workspaces/:id/members/:uid  → change role
-  // DELETE /api/workspaces/:id/members/:uid  → remove member
-  const wsMemberMatch = pathname.match(/^\/api\/workspaces\/([A-Z0-9]+)\/members\/([A-Z0-9a-z_-]+)$/);
-  if (wsMemberMatch) {
-    const user = requireAuth(req, res); if (!user) return;
-    const [, wsId, targetUid] = wsMemberMatch;
-    const ws = db.getWorkspace(wsId);
-    if (!ws) return json(res, { error: 'Not found' }, 404);
-    const membership = db.getWorkspaceMember(wsId, user.id);
-    if (membership?.role !== 'owner' && !user.isAdmin) return json(res, { error: 'Only owner can manage members' }, 403);
-    if (targetUid === ws.owner_id) return json(res, { error: 'Cannot modify owner' }, 400);
-    if (method === 'PATCH') {
-      const body = await readBody(req); let data = {}; try { data = JSON.parse(body); } catch(_) {}
-      if (!['editor','viewer'].includes(data.role)) return json(res, { error: 'role must be editor or viewer' }, 400);
-      db.updateMemberRole(wsId, targetUid, data.role);
-      return json(res, { ok: true });
-    }
-    if (method === 'DELETE') {
-      db.removeWorkspaceMember(wsId, targetUid);
-      return json(res, { ok: true });
-    }
-  }
-
-  // GET /api/workspaces/:id/endpoints  → endpoints in this workspace
-  const wsEpMatch = pathname.match(/^\/api\/workspaces\/([A-Z0-9]+)\/endpoints$/);
-  if (method === 'GET' && wsEpMatch) {
-    const user = requireAuth(req, res); if (!user) return;
-    const wsId = wsEpMatch[1];
-    const membership = db.getWorkspaceMember(wsId, user.id);
-    if (!membership && !user.isAdmin) return json(res, { error: 'Forbidden' }, 403);
-    return json(res, db.getAllEndpoints(user.id, wsId));
-  }
-
-  // Accept invite: POST /api/workspaces/accept-invite/:inviteId
-  const acceptInviteMatch = pathname.match(/^\/api\/workspaces\/accept-invite\/([A-Z0-9]+)$/);
-  if (method === 'POST' && acceptInviteMatch) {
-    const user = requireAuth(req, res); if (!user) return;
-    const invite = db.raw.prepare(`SELECT * FROM workspace_invites WHERE id=?`).get(acceptInviteMatch[1]);
-    if (!invite) return json(res, { error: 'Invite not found or expired' }, 404);
-    if (invite.github_login.toLowerCase() !== user.login.toLowerCase()) return json(res, { error: 'This invite is for @' + invite.github_login }, 403);
-    db.addWorkspaceMember(invite.workspace_id, user.id, 'editor', invite.invited_by);
-    db.deleteInvite(invite.id);
-    return json(res, { ok: true, workspaceId: invite.workspace_id });
-  }
-
-  // ── POSTMAN COLLECTION IMPORT ────────────────────────────────────────────
-  // POST /api/postman  body: { collection: {...} }
-  // POST /api/postman/:epId  body: { collection: {...} } — import into existing endpoint
-  const postmanMatch = pathname.match(/^\/api\/postman(?:\/([A-Z0-9]+))?$/);
-  if (method === 'POST' && postmanMatch) {
-    const user = requireAuth(req, res);
-    if (!user) return;
-    const body = await readBody(req);
-    let data = {}; try { data = JSON.parse(body); } catch(_) {}
-    const col = data.collection;
-    if (!col) return json(res, { error: 'collection required' }, 400);
-    try {
-      const result = parsePostmanCollection(col, user, postmanMatch[1]);
-      // Create endpoints + rules from parsed collection
-      const created = [];
-      for (const ep of result.endpoints) {
-        db.saveEndpoint(ep);
-        broadcast(null, 'endpoint_created', ep);
-        for (const rule of ep._rules || []) {
-          db.saveRule(rule);
-          broadcast(ep.id, 'rule_added', rule);
-        }
-        created.push({ id: ep.id, name: ep.name, rules: (ep._rules||[]).length });
-      }
-      return json(res, { ok: true, endpoints: created.length, details: created });
-    } catch(e) {
-      return json(res, { error: e.message }, 400);
-    }
-  }
-
-  // POST /api/postman/preview — returns what would be imported without saving
-  if (method === 'POST' && pathname === '/api/postman/preview') {
-    const user = requireAuth(req, res);
-    if (!user) return;
-    const body = await readBody(req);
-    let data = {}; try { data = JSON.parse(body); } catch(_) {}
-    const col = data.collection;
-    if (!col) return json(res, { error: 'collection required' }, 400);
-    try {
-      const result = parsePostmanCollection(col, user, null);
-      return json(res, {
-        ok: true,
-        name: result.name,
-        endpoints: result.endpoints.map(ep => ({
-          name: ep.name,
-          rules: (ep._rules||[]).map(r => ({ method: r.method, path: r.path, status: r.status }))
-        }))
-      });
     } catch(e) {
       return json(res, { error: e.message }, 400);
     }
@@ -1824,925 +1468,6 @@ setInterval(loadStats, 30000);
 </body></html>`;
 }
 
-
-// ── SDK LANDING PAGE ──────────────────────────────────────────────────────────
-function getSdkLandingHTML(baseUrl) {
-  return `<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>MockAPI SDK — Mock APIs em segundos, direto no seu código</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,600;0,800;1,400&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet"/>
-<style>
-*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-
-:root {
-  --bg:       #060608;
-  --bg2:      #0d0d12;
-  --bg3:      #12121a;
-  --border:   #1c1c28;
-  --border2:  #252535;
-  --green:    #00FF87;
-  --green-dim:#00FF8722;
-  --blue:     #7DD3FC;
-  --purple:   #C084FC;
-  --orange:   #FB923C;
-  --text:     #E2E8F0;
-  --text2:    #94A3B8;
-  --text3:    #475569;
-  --text4:    #1E293B;
-}
-
-html { scroll-behavior: smooth; }
-
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: 'Syne', system-ui, sans-serif;
-  min-height: 100vh;
-  overflow-x: hidden;
-}
-
-/* ── GRAIN OVERLAY ── */
-body::before {
-  content: '';
-  position: fixed; inset: 0;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
-  pointer-events: none;
-  z-index: 1000;
-  opacity: .4;
-}
-
-/* ── GRID BACKGROUND ── */
-.grid-bg {
-  position: fixed; inset: 0;
-  background-image:
-    linear-gradient(var(--border) 1px, transparent 1px),
-    linear-gradient(90deg, var(--border) 1px, transparent 1px);
-  background-size: 40px 40px;
-  opacity: .35;
-  pointer-events: none;
-}
-
-/* ── GLOW ── */
-.glow-orb {
-  position: fixed;
-  border-radius: 50%;
-  filter: blur(120px);
-  pointer-events: none;
-  opacity: .12;
-}
-.glow-1 { width: 600px; height: 600px; background: var(--green); top: -200px; left: -100px; }
-.glow-2 { width: 500px; height: 500px; background: var(--blue); bottom: 0; right: -100px; }
-.glow-3 { width: 300px; height: 300px; background: var(--purple); top: 40%; left: 50%; }
-
-/* ── NAV ── */
-nav {
-  position: fixed; top: 0; left: 0; right: 0;
-  z-index: 100;
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 48px; height: 64px;
-  background: rgba(6,6,8,.8);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--border);
-}
-
-.nav-logo {
-  display: flex; align-items: center; gap: 10px;
-  font-family: 'JetBrains Mono', monospace;
-  font-weight: 800; font-size: 15px; color: #fff;
-}
-.nav-logo .badge {
-  background: var(--green); color: #000;
-  font-size: 9px; font-weight: 800; letter-spacing: .08em;
-  padding: 2px 6px; border-radius: 4px; text-transform: uppercase;
-}
-.nav-links { display: flex; gap: 32px; align-items: center; }
-.nav-links a {
-  font-size: 13px; color: var(--text3); text-decoration: none;
-  font-family: 'JetBrains Mono', monospace;
-  transition: color .2s;
-}
-.nav-links a:hover { color: var(--text); }
-.btn-nav {
-  background: var(--green-dim); border: 1px solid #00FF8744;
-  color: var(--green); padding: 8px 20px; border-radius: 8px;
-  font-size: 13px; font-family: 'JetBrains Mono', monospace; font-weight: 600;
-  cursor: pointer; text-decoration: none; transition: all .2s;
-}
-.btn-nav:hover { background: var(--green); color: #000; }
-
-/* ── HERO ── */
-.hero {
-  padding: 160px 48px 100px;
-  max-width: 1200px; margin: 0 auto;
-  position: relative; z-index: 2;
-}
-
-.hero-eyebrow {
-  display: inline-flex; align-items: center; gap: 8px;
-  background: var(--bg3); border: 1px solid var(--border2);
-  padding: 6px 14px; border-radius: 100px;
-  font-family: 'JetBrains Mono', monospace; font-size: 11px;
-  color: var(--green); letter-spacing: .08em; margin-bottom: 32px;
-  animation: fadeUp .6s ease both;
-}
-.hero-eyebrow span { opacity: .5; }
-
-.hero h1 {
-  font-size: clamp(48px, 7vw, 88px);
-  font-weight: 800; line-height: 1.0;
-  letter-spacing: -.03em; margin-bottom: 24px;
-  animation: fadeUp .6s .1s ease both;
-}
-
-.hero h1 .accent-green { color: var(--green); }
-.hero h1 .accent-dim   { color: var(--text3); }
-
-.hero-sub {
-  font-size: 18px; color: var(--text2); max-width: 560px;
-  line-height: 1.7; margin-bottom: 48px;
-  font-family: 'JetBrains Mono', monospace; font-weight: 300;
-  animation: fadeUp .6s .2s ease both;
-}
-
-.hero-cta {
-  display: flex; gap: 12px; flex-wrap: wrap;
-  animation: fadeUp .6s .3s ease both;
-}
-
-.btn-primary {
-  display: inline-flex; align-items: center; gap: 8px;
-  background: var(--green); color: #000;
-  padding: 14px 28px; border-radius: 10px;
-  font-size: 15px; font-family: 'JetBrains Mono', monospace; font-weight: 700;
-  text-decoration: none; transition: all .2s;
-  border: none; cursor: pointer;
-}
-.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 12px 40px #00FF8740; }
-
-.btn-secondary {
-  display: inline-flex; align-items: center; gap: 8px;
-  background: transparent; color: var(--text2);
-  padding: 14px 28px; border-radius: 10px;
-  font-size: 15px; font-family: 'JetBrains Mono', monospace; font-weight: 400;
-  text-decoration: none; border: 1px solid var(--border2);
-  transition: all .2s; cursor: pointer;
-}
-.btn-secondary:hover { border-color: var(--text3); color: var(--text); }
-
-/* ── CODE WINDOW ── */
-.code-hero {
-  margin-top: 80px;
-  animation: fadeUp .6s .4s ease both;
-}
-
-.code-window {
-  background: var(--bg2);
-  border: 1px solid var(--border2);
-  border-radius: 14px;
-  overflow: hidden;
-  box-shadow: 0 32px 80px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.03);
-}
-
-.code-titlebar {
-  background: var(--bg3);
-  padding: 12px 20px;
-  display: flex; align-items: center; gap: 10px;
-  border-bottom: 1px solid var(--border);
-}
-.code-dot { width: 12px; height: 12px; border-radius: 50%; }
-.code-dot.r { background: #FF5F57; }
-.code-dot.y { background: #FFBD2E; }
-.code-dot.g { background: #28CA41; }
-.code-filename {
-  font-family: 'JetBrains Mono', monospace; font-size: 12px;
-  color: var(--text3); margin-left: 8px; flex: 1;
-}
-.code-tabs {
-  display: flex; gap: 0;
-}
-.code-tab {
-  font-family: 'JetBrains Mono', monospace; font-size: 11px;
-  color: var(--text3); padding: 4px 14px; cursor: pointer;
-  border-right: 1px solid var(--border); transition: all .15s;
-}
-.code-tab.active { color: var(--green); background: var(--bg2); }
-.code-tab:hover:not(.active) { color: var(--text2); }
-
-.code-body {
-  padding: 28px 32px;
-  font-family: 'JetBrains Mono', monospace; font-size: 13px;
-  line-height: 1.8; overflow-x: auto;
-}
-.code-body pre { white-space: pre; }
-
-.tok-comment  { color: #3D5566; }
-.tok-keyword  { color: var(--purple); }
-.tok-fn       { color: var(--blue); }
-.tok-string   { color: var(--orange); }
-.tok-number   { color: #F9A825; }
-.tok-operator { color: var(--text3); }
-.tok-var      { color: var(--text); }
-.tok-green    { color: var(--green); }
-.tok-type     { color: #67E8F9; }
-
-/* ── SECTIONS ── */
-section {
-  padding: 100px 48px;
-  max-width: 1200px; margin: 0 auto;
-  position: relative; z-index: 2;
-}
-
-.section-label {
-  font-family: 'JetBrains Mono', monospace; font-size: 11px;
-  color: var(--green); letter-spacing: .12em; text-transform: uppercase;
-  margin-bottom: 16px;
-}
-.section-title {
-  font-size: clamp(32px, 4vw, 52px); font-weight: 800;
-  letter-spacing: -.02em; margin-bottom: 16px; line-height: 1.1;
-}
-.section-sub {
-  font-size: 16px; color: var(--text2); max-width: 500px;
-  font-family: 'JetBrains Mono', monospace; font-weight: 300; line-height: 1.7;
-}
-
-/* ── FEATURES GRID ── */
-.features-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1px;
-  background: var(--border);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  overflow: hidden;
-  margin-top: 64px;
-}
-
-.feature-card {
-  background: var(--bg);
-  padding: 40px 36px;
-  transition: background .2s;
-}
-.feature-card:hover { background: var(--bg2); }
-
-.feature-icon {
-  width: 44px; height: 44px;
-  background: var(--bg3); border: 1px solid var(--border2);
-  border-radius: 12px;
-  display: flex; align-items: center; justify-content: center;
-  margin-bottom: 20px; font-size: 20px;
-}
-.feature-card h3 {
-  font-size: 18px; font-weight: 700; margin-bottom: 10px;
-  letter-spacing: -.01em;
-}
-.feature-card p {
-  font-size: 13px; color: var(--text2);
-  font-family: 'JetBrains Mono', monospace; font-weight: 300;
-  line-height: 1.7;
-}
-
-/* ── COMPARISON TABLE ── */
-.compare-wrap {
-  margin-top: 64px;
-  border: 1px solid var(--border2);
-  border-radius: 16px; overflow: hidden;
-}
-table { width: 100%; border-collapse: collapse; }
-thead { background: var(--bg3); }
-th {
-  padding: 16px 24px; text-align: left;
-  font-size: 12px; font-family: 'JetBrains Mono', monospace;
-  color: var(--text3); letter-spacing: .06em; text-transform: uppercase;
-  border-bottom: 1px solid var(--border2);
-}
-th:first-child { color: var(--text2); }
-td {
-  padding: 14px 24px; font-size: 14px;
-  border-bottom: 1px solid var(--border);
-}
-tr:last-child td { border-bottom: none; }
-td:first-child { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text2); }
-.check-green { color: var(--green); font-size: 16px; }
-.check-red   { color: #475569; font-size: 16px; }
-.check-mid   { color: var(--orange); font-size: 16px; }
-.highlight-col { background: #00FF8706; }
-
-/* ── INSTALL BLOCK ── */
-.install-block {
-  display: flex; align-items: center; gap: 12px;
-  background: var(--bg2); border: 1px solid var(--border2);
-  border-radius: 10px; padding: 14px 20px;
-  font-family: 'JetBrains Mono', monospace; font-size: 14px;
-  color: var(--green); margin-top: 32px; max-width: 460px;
-  cursor: pointer; transition: border-color .2s;
-}
-.install-block:hover { border-color: var(--green); }
-.install-block .prompt { color: var(--text3); margin-right: 4px; }
-.install-copy {
-  margin-left: auto; background: none; border: none; color: var(--text3);
-  cursor: pointer; font-size: 12px; font-family: 'JetBrains Mono', monospace;
-  transition: color .2s;
-}
-.install-copy:hover { color: var(--green); }
-
-/* ── STEPS ── */
-.steps {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 0;
-  margin-top: 64px; position: relative;
-}
-.steps::before {
-  content: '';
-  position: absolute; top: 28px; left: 28px; right: 28px; height: 1px;
-  background: linear-gradient(90deg, var(--green), var(--blue), var(--purple), transparent);
-  opacity: .4;
-}
-.step { padding: 0 24px 0 0; position: relative; }
-.step-num {
-  width: 56px; height: 56px;
-  background: var(--bg2); border: 1px solid var(--border2);
-  border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700;
-  color: var(--green); margin-bottom: 20px;
-  position: relative; z-index: 1;
-}
-.step h4 { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
-.step p { font-size: 12px; color: var(--text3); font-family: 'JetBrains Mono', monospace; line-height: 1.6; }
-
-/* ── PRICING ── */
-.pricing-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
-  margin-top: 64px;
-}
-.pricing-card {
-  background: var(--bg2); border: 1px solid var(--border2);
-  border-radius: 16px; padding: 32px; position: relative;
-  transition: transform .2s, border-color .2s;
-}
-.pricing-card:hover { transform: translateY(-4px); }
-.pricing-card.featured {
-  border-color: var(--green);
-  background: linear-gradient(135deg, #060608 0%, #0a1a0a 100%);
-}
-.pricing-card.featured::before {
-  content: 'MAIS POPULAR';
-  position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
-  background: var(--green); color: #000; font-size: 10px; font-weight: 800;
-  padding: 3px 14px; border-radius: 100px; letter-spacing: .08em;
-  font-family: 'JetBrains Mono', monospace;
-}
-.price-label { font-size: 11px; color: var(--text3); letter-spacing: .08em; margin-bottom: 12px; font-family: 'JetBrains Mono', monospace; }
-.price-value { font-size: 48px; font-weight: 800; letter-spacing: -.03em; margin-bottom: 4px; }
-.price-value sup { font-size: 20px; vertical-align: top; margin-top: 12px; color: var(--text3); font-weight: 400; }
-.price-value span { font-size: 14px; color: var(--text3); font-weight: 400; }
-.price-desc { font-size: 13px; color: var(--text2); margin-bottom: 28px; font-family: 'JetBrains Mono', monospace; line-height: 1.5; }
-.price-features { list-style: none; margin-bottom: 28px; }
-.price-features li {
-  font-size: 13px; color: var(--text2); padding: 7px 0;
-  border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px;
-  font-family: 'JetBrains Mono', monospace;
-}
-.price-features li:last-child { border-bottom: none; }
-.price-features .ck { color: var(--green); }
-
-/* ── WAITLIST ── */
-.waitlist-section {
-  padding: 100px 48px;
-  text-align: center;
-  position: relative; z-index: 2;
-}
-.waitlist-card {
-  max-width: 620px; margin: 0 auto;
-  background: var(--bg2); border: 1px solid var(--border2);
-  border-radius: 24px; padding: 64px 48px;
-  position: relative; overflow: hidden;
-}
-.waitlist-card::before {
-  content: '';
-  position: absolute; inset: 0;
-  background: radial-gradient(ellipse at 50% 0%, #00FF8712, transparent 60%);
-  pointer-events: none;
-}
-.waitlist-card h2 { font-size: 40px; font-weight: 800; letter-spacing: -.02em; margin-bottom: 16px; }
-.waitlist-card p { font-size: 15px; color: var(--text2); font-family: 'JetBrains Mono', monospace; margin-bottom: 32px; line-height: 1.7; }
-
-.waitlist-form {
-  display: flex; gap: 0;
-  background: var(--bg3); border: 1px solid var(--border2);
-  border-radius: 10px; overflow: hidden; max-width: 480px; margin: 0 auto 16px;
-  transition: border-color .2s;
-}
-.waitlist-form:focus-within { border-color: var(--green); }
-.waitlist-form input {
-  flex: 1; background: none; border: none; outline: none;
-  padding: 14px 20px; font-size: 14px; color: var(--text);
-  font-family: 'JetBrains Mono', monospace;
-}
-.waitlist-form input::placeholder { color: var(--text4); }
-.waitlist-form button {
-  background: var(--green); color: #000; border: none;
-  padding: 14px 24px; font-size: 13px; font-weight: 700;
-  font-family: 'JetBrains Mono', monospace; cursor: pointer;
-  transition: background .2s; white-space: nowrap;
-}
-.waitlist-form button:hover { background: #00e87a; }
-
-.waitlist-note { font-size: 11px; color: var(--text4); font-family: 'JetBrains Mono', monospace; }
-.waitlist-count {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-size: 12px; color: var(--text3); font-family: 'JetBrains Mono', monospace;
-  margin-top: 20px;
-}
-.waitlist-count .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
-
-/* ── FOOTER ── */
-footer {
-  border-top: 1px solid var(--border);
-  padding: 40px 48px;
-  display: flex; align-items: center; justify-content: space-between;
-  position: relative; z-index: 2;
-}
-footer .logo { font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 700; color: #fff; }
-footer .copy { font-size: 12px; color: var(--text3); font-family: 'JetBrains Mono', monospace; }
-footer .links { display: flex; gap: 24px; }
-footer .links a { font-size: 12px; color: var(--text3); text-decoration: none; font-family: 'JetBrains Mono', monospace; transition: color .2s; }
-footer .links a:hover { color: var(--text); }
-
-/* ── SCROLL REVEAL ── */
-.reveal { opacity: 0; transform: translateY(24px); transition: opacity .6s ease, transform .6s ease; }
-.reveal.visible { opacity: 1; transform: none; }
-
-/* ── ANIMATIONS ── */
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(20px); }
-  to   { opacity: 1; transform: none; }
-}
-@keyframes pulse {
-  0%,100% { opacity: 1; } 50% { opacity: .3; }
-}
-@keyframes blink {
-  0%,100% { opacity: 1; } 50% { opacity: 0; }
-}
-@keyframes typewriter {
-  from { width: 0; } to { width: 100%; }
-}
-
-.cursor {
-  display: inline-block; width: 2px; height: 1em;
-  background: var(--green); vertical-align: middle;
-  animation: blink 1s step-end infinite;
-  margin-left: 2px;
-}
-
-/* ── RESPONSIVE ── */
-@media(max-width:768px) {
-  nav { padding: 0 20px; }
-  .nav-links { display: none; }
-  .hero { padding: 120px 24px 60px; }
-  section { padding: 60px 24px; }
-  .features-grid { grid-template-columns: 1fr; }
-  .pricing-grid { grid-template-columns: 1fr; }
-  .steps { grid-template-columns: 1fr 1fr; gap: 32px; }
-  .steps::before { display: none; }
-  footer { flex-direction: column; gap: 16px; text-align: center; }
-  .waitlist-section { padding: 60px 24px; }
-  .waitlist-card { padding: 40px 24px; }
-}
-</style>
-</head>
-<body>
-
-<div class="grid-bg"></div>
-<div class="glow-orb glow-1"></div>
-<div class="glow-orb glow-2"></div>
-<div class="glow-orb glow-3"></div>
-
-<!-- NAV -->
-<nav>
-  <div class="nav-logo">
-    ⚡ MockAPI
-    <span class="badge">SDK</span>
-  </div>
-  <div class="nav-links">
-    <a href="#features">Features</a>
-    <a href="#como-funciona">Como funciona</a>
-    <a href="#comparacao">vs concorrentes</a>
-    <a href="#precos">Preços</a>
-    <a href="${baseUrl}/docs" target="_blank">Docs</a>
-  </div>
-  <a href="#waitlist" class="btn-nav">Entrar na lista →</a>
-</nav>
-
-<!-- HERO -->
-<div class="hero">
-  <div class="hero-eyebrow">
-    <span>●</span> EM DESENVOLVIMENTO · Lista de espera aberta
-  </div>
-
-  <h1>
-    Mock APIs<br/>
-    <span class="accent-green">em segundos.</span><br/>
-    <span class="accent-dim">No seu código.</span>
-  </h1>
-
-  <p class="hero-sub">
-    O SDK do MockAPI traz a infraestrutura de mock direto para o seu projeto.
-    Sem configuração. Sem Service Workers. Funciona em qualquer ambiente.
-  </p>
-
-  <div class="hero-cta">
-    <a href="#waitlist" class="btn-primary">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      Entrar na lista de espera
-    </a>
-    <a href="${baseUrl}" target="_blank" class="btn-secondary">
-      Ver plataforma →
-    </a>
-  </div>
-
-  <!-- INSTALL BLOCK -->
-  <div class="install-block" onclick="copyInstall(this)">
-    <span class="prompt">$</span>
-    <span>npm install @mockapi/js</span>
-    <button class="install-copy">copiar</button>
-  </div>
-
-  <!-- CODE WINDOW -->
-  <div class="code-hero">
-    <div class="code-window">
-      <div class="code-titlebar">
-        <div class="code-dot r"></div>
-        <div class="code-dot y"></div>
-        <div class="code-dot g"></div>
-        <div class="code-tabs">
-          <div class="code-tab active" onclick="switchTab('js', this)">JavaScript</div>
-          <div class="code-tab" onclick="switchTab('ts', this)">TypeScript</div>
-          <div class="code-tab" onclick="switchTab('py', this)">Python</div>
-        </div>
-        <span class="code-filename" style="text-align:right">setup.test.js</span>
-      </div>
-      <div class="code-body">
-        <pre id="code-js"><span class="tok-comment">// 1. Instale e importe</span>
-<span class="tok-keyword">import</span> <span class="tok-type">{ MockAPI }</span> <span class="tok-keyword">from</span> <span class="tok-string">'@mockapi/js'</span>
-
-<span class="tok-comment">// 2. Conecte com seu token</span>
-<span class="tok-keyword">const</span> <span class="tok-var">mock</span> = <span class="tok-keyword">new</span> <span class="tok-fn">MockAPI</span>(<span class="tok-string">'mapi_seu_token_aqui'</span>)
-
-<span class="tok-comment">// 3. Defina seus mocks</span>
-<span class="tok-keyword">await</span> mock.<span class="tok-fn">intercept</span>(<span class="tok-string">'GET /users'</span>, {
-  status: <span class="tok-number">200</span>,
-  data: mock.<span class="tok-fn">faker</span>(<span class="tok-string">'user'</span>, <span class="tok-number">10</span>)   <span class="tok-comment">// gera 10 users fake</span>
-})
-
-<span class="tok-keyword">await</span> mock.<span class="tok-fn">intercept</span>(<span class="tok-string">'POST /login'</span>, {
-  status: <span class="tok-number">200</span>,
-  body: { token: <span class="tok-string">'jwt-simulado-123'</span>, expiresIn: <span class="tok-number">3600</span> }
-})
-
-<span class="tok-comment">// 4. Use normalmente — sem mudar seu código de produção</span>
-<span class="tok-keyword">const</span> <span class="tok-var">res</span> = <span class="tok-keyword">await</span> <span class="tok-fn">fetch</span>(mock.<span class="tok-fn">url</span>(<span class="tok-string">'/users'</span>))
-<span class="tok-keyword">const</span> <span class="tok-var">users</span> = <span class="tok-keyword">await</span> res.<span class="tok-fn">json</span>()  <span class="tok-comment">// → [{id, name, email, ...}]</span>
-
-<span class="tok-comment">// 5. Limpe após os testes</span>
-<span class="tok-keyword">await</span> mock.<span class="tok-fn">reset</span>()</pre>
-
-        <pre id="code-ts" style="display:none"><span class="tok-keyword">import</span> <span class="tok-type">{ MockAPI, MockConfig }</span> <span class="tok-keyword">from</span> <span class="tok-string">'@mockapi/js'</span>
-
-<span class="tok-keyword">const</span> <span class="tok-var">mock</span> = <span class="tok-keyword">new</span> <span class="tok-fn">MockAPI</span>(<span class="tok-string">'mapi_seu_token'</span>)
-
-<span class="tok-comment">// Tipagem completa com generics</span>
-<span class="tok-keyword">interface</span> <span class="tok-type">User</span> {
-  id: <span class="tok-type">number</span>; name: <span class="tok-type">string</span>; email: <span class="tok-type">string</span>
-}
-
-<span class="tok-keyword">await</span> mock.<span class="tok-fn">intercept</span>&lt;<span class="tok-type">User[]</span>&gt;(<span class="tok-string">'GET /users'</span>, {
-  data: mock.<span class="tok-fn">faker</span>&lt;<span class="tok-type">User</span>&gt;(<span class="tok-string">'user'</span>, <span class="tok-number">10</span>)
-})
-
-<span class="tok-comment">// CRUD automático com tipagem</span>
-<span class="tok-keyword">const</span> <span class="tok-var">users</span> = mock.<span class="tok-fn">crud</span>&lt;<span class="tok-type">User</span>&gt;(<span class="tok-string">'/api/users'</span>)
-<span class="tok-keyword">await</span> users.<span class="tok-fn">seed</span>([
-  { id: <span class="tok-number">1</span>, name: <span class="tok-string">'Ana'</span>, email: <span class="tok-string">'ana@teste.com'</span> }
-])</pre>
-
-        <pre id="code-py" style="display:none"><span class="tok-keyword">from</span> mockapi <span class="tok-keyword">import</span> <span class="tok-type">MockAPI</span>
-<span class="tok-keyword">import</span> pytest
-
-<span class="tok-comment"># Inicializa com seu token</span>
-mock = <span class="tok-fn">MockAPI</span>(<span class="tok-string">"mapi_seu_token_aqui"</span>)
-
-<span class="tok-comment"># Define o mock</span>
-mock.<span class="tok-fn">intercept</span>(<span class="tok-string">"GET /users"</span>, {
-    <span class="tok-string">"status"</span>: <span class="tok-number">200</span>,
-    <span class="tok-string">"data"</span>: mock.<span class="tok-fn">faker</span>(<span class="tok-string">"user"</span>, count=<span class="tok-number">5</span>)
-})
-
-<span class="tok-comment"># Use no pytest</span>
-<span class="tok-keyword">def</span> <span class="tok-fn">test_lista_usuarios</span>():
-    res = requests.<span class="tok-fn">get</span>(mock.<span class="tok-fn">url</span>(<span class="tok-string">"/users"</span>))
-    <span class="tok-keyword">assert</span> res.status_code == <span class="tok-number">200</span>
-    <span class="tok-keyword">assert</span> <span class="tok-fn">len</span>(res.<span class="tok-fn">json</span>()) == <span class="tok-number">5</span></pre>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- FEATURES -->
-<section id="features">
-  <div class="reveal">
-    <div class="section-label">// features</div>
-    <h2 class="section-title">Tudo que você precisa.<br/>Nada que você não precisa.</h2>
-    <p class="section-sub">Construído sobre a infraestrutura do MockAPI — battle-tested, zero config.</p>
-  </div>
-
-  <div class="features-grid reveal">
-    <div class="feature-card">
-      <div class="feature-icon">⚡</div>
-      <h3>Zero Service Worker</h3>
-      <p>Diferente do MSW, funciona em Node.js, CI/CD, Bun, Deno e qualquer ambiente sem instalar nada extra.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">🎲</div>
-      <h3>Faker integrado</h3>
-      <p>Gere dados realistas com <code style="color:var(--green);font-size:11px">mock.faker('user', 50)</code> — nomes, emails, CPFs, endereços brasileiros.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">📦</div>
-      <h3>CRUD automático</h3>
-      <p>Uma linha para criar uma API REST completa com GET, POST, PATCH, DELETE e persistência real.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">🔁</div>
-      <h3>WebSocket em tempo real</h3>
-      <p>Veja cada request no dashboard em tempo real enquanto seus testes rodam. Debug instantâneo.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">🔀</div>
-      <h3>Mock Rules</h3>
-      <p>Simule erros, latência, status codes diferentes por rota. Teste cenários de falha sem complicação.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">📋</div>
-      <h3>OpenAPI / Swagger</h3>
-      <p>Importe sua spec e o SDK gera todos os mocks automaticamente. De spec a mock em 3 segundos.</p>
-    </div>
-  </div>
-</section>
-
-<!-- COMO FUNCIONA -->
-<section id="como-funciona">
-  <div class="reveal">
-    <div class="section-label">// como funciona</div>
-    <h2 class="section-title">Do npm install<br/>ao primeiro mock.</h2>
-  </div>
-
-  <div class="steps reveal">
-    <div class="step">
-      <div class="step-num">01</div>
-      <h4>Instale</h4>
-      <p>npm install @mockapi/js<br/>ou pip install mockapi</p>
-    </div>
-    <div class="step">
-      <div class="step-num">02</div>
-      <h4>Gere um token</h4>
-      <p>No painel MockAPI, clique em 🔑 Tokens e gere um token de API.</p>
-    </div>
-    <div class="step">
-      <div class="step-num">03</div>
-      <h4>Defina seus mocks</h4>
-      <p>Use mock.intercept() ou mock.crud() direto no seu código de teste.</p>
-    </div>
-    <div class="step">
-      <div class="step-num">04</div>
-      <h4>Rode e observe</h4>
-      <p>Seus testes rodam. Veja cada request ao vivo no dashboard MockAPI.</p>
-    </div>
-  </div>
-</section>
-
-<!-- COMPARAÇÃO -->
-<section id="comparacao">
-  <div class="reveal">
-    <div class="section-label">// comparação</div>
-    <h2 class="section-title">Por que não MSW<br/>ou Mockoon?</h2>
-  </div>
-
-  <div class="compare-wrap reveal">
-    <table>
-      <thead>
-        <tr>
-          <th>Feature</th>
-          <th class="highlight-col" style="color:var(--green)">MockAPI SDK</th>
-          <th>MSW</th>
-          <th>Mockoon</th>
-          <th>WireMock</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Funciona em Node.js / CI</td>
-          <td class="highlight-col"><span class="check-green">✓</span></td>
-          <td><span class="check-mid">~</span></td>
-          <td><span class="check-red">✗</span></td>
-          <td><span class="check-green">✓</span></td>
-        </tr>
-        <tr>
-          <td>Zero instalação de deps extras</td>
-          <td class="highlight-col"><span class="check-green">✓</span></td>
-          <td><span class="check-red">✗</span></td>
-          <td><span class="check-red">✗</span></td>
-          <td><span class="check-red">✗</span></td>
-        </tr>
-        <tr>
-          <td>CRUD persistente com 1 linha</td>
-          <td class="highlight-col"><span class="check-green">✓</span></td>
-          <td><span class="check-red">✗</span></td>
-          <td><span class="check-mid">~</span></td>
-          <td><span class="check-red">✗</span></td>
-        </tr>
-        <tr>
-          <td>Faker integrado</td>
-          <td class="highlight-col"><span class="check-green">✓</span></td>
-          <td><span class="check-red">✗</span></td>
-          <td><span class="check-green">✓</span></td>
-          <td><span class="check-red">✗</span></td>
-        </tr>
-        <tr>
-          <td>Dashboard em tempo real</td>
-          <td class="highlight-col"><span class="check-green">✓</span></td>
-          <td><span class="check-red">✗</span></td>
-          <td><span class="check-green">✓</span></td>
-          <td><span class="check-mid">~</span></td>
-        </tr>
-        <tr>
-          <td>Multi-linguagem (JS, TS, Python)</td>
-          <td class="highlight-col"><span class="check-green">✓</span></td>
-          <td><span class="check-mid">~</span></td>
-          <td><span class="check-red">✗</span></td>
-          <td><span class="check-green">✓</span></td>
-        </tr>
-        <tr>
-          <td>Preço</td>
-          <td class="highlight-col" style="color:var(--green);font-family:monospace;font-size:13px">Grátis</td>
-          <td style="font-family:monospace;font-size:13px">Grátis</td>
-          <td style="font-family:monospace;font-size:13px">Grátis</td>
-          <td style="font-family:monospace;font-size:13px">$$$</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-</section>
-
-<!-- PREÇOS -->
-<section id="precos">
-  <div class="reveal">
-    <div class="section-label">// preços</div>
-    <h2 class="section-title">Simples. Sem surpresas.</h2>
-    <p class="section-sub">O SDK é gratuito no plano Free. Cresce com você.</p>
-  </div>
-
-  <div class="pricing-grid reveal">
-    <div class="pricing-card">
-      <div class="price-label">FREE</div>
-      <div class="price-value"><sup>R$</sup>0<span>/mês</span></div>
-      <div class="price-desc">Para explorar e testar.</div>
-      <ul class="price-features">
-        <li><span class="ck">✓</span> SDK JS + Python</li>
-        <li><span class="ck">✓</span> 3 endpoints</li>
-        <li><span class="ck">✓</span> 1.000 req/dia</li>
-        <li><span class="ck">✓</span> Dashboard em tempo real</li>
-      </ul>
-      <a href="${baseUrl}" class="btn-secondary" style="display:block;text-align:center;padding:12px">Começar grátis</a>
-    </div>
-
-    <div class="pricing-card featured">
-      <div class="price-label">PRO</div>
-      <div class="price-value"><sup>R$</sup>59<span>/mês</span></div>
-      <div class="price-desc">Para devs e times que precisam de mais.</div>
-      <ul class="price-features">
-        <li><span class="ck">✓</span> Tudo do Free</li>
-        <li><span class="ck">✓</span> 50 endpoints</li>
-        <li><span class="ck">✓</span> 100.000 req/dia</li>
-        <li><span class="ck">✓</span> Tokens ilimitados</li>
-        <li><span class="ck">✓</span> Suporte prioritário</li>
-      </ul>
-      <a href="#waitlist" class="btn-primary" style="display:block;text-align:center;justify-content:center">Assinar Pro →</a>
-    </div>
-
-    <div class="pricing-card">
-      <div class="price-label">TEAM</div>
-      <div class="price-value"><sup>R$</sup>199<span>/mês</span></div>
-      <div class="price-desc">Para equipes e projetos de escala.</div>
-      <ul class="price-features">
-        <li><span class="ck">✓</span> Tudo do Pro</li>
-        <li><span class="ck">✓</span> 200 endpoints</li>
-        <li><span class="ck">✓</span> 1.000.000 req/dia</li>
-        <li><span class="ck">✓</span> SLA e onboarding</li>
-      </ul>
-      <a href="mailto:anderson@mockapi.dev?subject=Plano Team" class="btn-secondary" style="display:block;text-align:center;padding:12px">Falar com time →</a>
-    </div>
-  </div>
-</section>
-
-<!-- WAITLIST -->
-<div class="waitlist-section" id="waitlist">
-  <div class="waitlist-card reveal">
-    <div class="section-label">// lista de espera</div>
-    <h2>Seja o primeiro<br/>a usar o SDK.</h2>
-    <p>O SDK está em desenvolvimento. Entre na lista e ganhe acesso antecipado + plano Pro grátis por 3 meses.</p>
-
-    <div class="waitlist-form">
-      <input type="email" id="waitlist-email" placeholder="seu@email.com" onkeydown="if(event.key==='Enter')joinWaitlist()"/>
-      <button onclick="joinWaitlist()">Quero acesso →</button>
-    </div>
-    <div class="waitlist-note">Sem spam. Apenas quando o SDK estiver pronto.</div>
-
-    <div class="waitlist-count">
-      <div class="dot"></div>
-      <span id="waitlist-num">47 devs</span> já na lista
-    </div>
-
-    <div id="waitlist-success" style="display:none;margin-top:20px;background:#0a1a0a;border:1px solid #00FF8733;border-radius:8px;padding:16px">
-      <div style="color:var(--green);font-family:monospace;font-size:13px">✓ Você está na lista! Avisaremos quando o SDK estiver pronto.</div>
-    </div>
-  </div>
-</div>
-
-<!-- FOOTER -->
-<footer>
-  <div class="logo">⚡ MockAPI SDK</div>
-  <div class="links">
-    <a href="${baseUrl}">Plataforma</a>
-    <a href="${baseUrl}/docs">Docs</a>
-    <a href="mailto:anderson@mockapi.dev">Contato</a>
-  </div>
-  <div class="copy">© 2025 MockAPI · Feito no Brasil 🇧🇷</div>
-</footer>
-
-<script>
-// Tab switcher
-function switchTab(lang, el) {
-  document.querySelectorAll('.code-tab').forEach(t => t.classList.remove('active'));
-  el.classList.add('active');
-  ['js','ts','py'].forEach(l => {
-    const el2 = document.getElementById('code-' + l);
-    if (el2) el2.style.display = l === lang ? 'block' : 'none';
-  });
-}
-
-// Copy install
-function copyInstall(el) {
-  navigator.clipboard.writeText('npm install @mockapi/js').then(() => {
-    const btn = el.querySelector('.install-copy');
-    btn.textContent = '✓ copiado';
-    btn.style.color = 'var(--green)';
-    setTimeout(() => { btn.textContent = 'copiar'; btn.style.color = ''; }, 2000);
-  });
-}
-
-// Waitlist
-function joinWaitlist() {
-  const email = document.getElementById('waitlist-email').value.trim();
-  if (!email || !email.includes('@')) {
-    document.getElementById('waitlist-email').style.borderColor = '#ff4444';
-    return;
-  }
-  document.getElementById('waitlist-success').style.display = 'block';
-  document.querySelector('.waitlist-form').style.opacity = '.4';
-  document.querySelector('.waitlist-form').style.pointerEvents = 'none';
-  // Animate counter up
-  const num = document.getElementById('waitlist-num');
-  let count = 47;
-  const interval = setInterval(() => {
-    count++;
-    num.textContent = count + ' devs';
-    if (count >= 48) clearInterval(interval);
-  }, 100);
-}
-
-// Scroll reveal
-const observer = new IntersectionObserver(entries => {
-  entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
-}, { threshold: 0.1 });
-document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
-
-// Animated counter in hero
-let heroStarted = false;
-function animateHero() {
-  if (heroStarted) return;
-  heroStarted = true;
-}
-setTimeout(animateHero, 500);
-</script>
-</body>
-</html>
-`;
-}
-
 // ── LANDING PAGE ─────────────────────────────────────────────────────────────
 function getLandingHTML(baseUrl) {
   return `<!DOCTYPE html>
@@ -2809,7 +1534,6 @@ footer{border-top:1px solid var(--border);padding:32px 48px;display:flex;justify
   <div class="logo">⚡ <span>MockAPI</span> Inspector</div>
   <div class="nav-links">
     <a href="/docs">Docs</a>
-    <a href="/sdk">SDK</a>
     <a href="https://github.com/andersonrolim/mockapi" target="_blank">GitHub</a>
     <a href="/login" class="btn btn-primary" style="padding:8px 16px;font-size:13px">Começar grátis →</a>
   </div>
@@ -2897,7 +1621,7 @@ footer{border-top:1px solid var(--border);padding:32px 48px;display:flex;justify
 
 <footer>
   <div>⚡ MockAPI Inspector — Mock server para devs</div>
-  <div style="display:flex;gap:20px"><a href="/docs" style="color:#333">Docs</a><a href="/sdk" style="color:#333">SDK</a><a href="/login" style="color:#333">Login</a></div>
+  <div style="display:flex;gap:20px"><a href="/docs" style="color:#333">Docs</a><a href="/login" style="color:#333">Login</a></div>
 </footer>
 </body></html>`;
 }
@@ -3261,8 +1985,6 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 /* MODAL */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:1000;animation:fadeIn .15s ease}
 .modal{background:var(--bg);border:1px solid var(--border2);border-radius:12px;padding:32px;width:500px;max-height:90vh;overflow:auto;box-shadow:0 25px 80px rgba(0,0,0,.8)}
-.revoke-btn{background:none;border:1px solid #2a2a2a;color:#555;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;transition:all .2s;flex-shrink:0}
-.revoke-btn:hover{color:#ff4444;border-color:#ff444433}
 .modal-title{font-size:18px;font-weight:700;color:#fff;margin-bottom:24px}
 .modal-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
 .form-group{margin-bottom:18px}
@@ -3323,21 +2045,6 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
       </div>
     </div>
 
-    <!-- WORKSPACE SELECTOR -->
-    <div id="workspace-selector" style="margin:8px 12px 4px;display:none">
-      <div style="font-size:9px;color:var(--text3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:5px">Workspace</div>
-      <div style="display:flex;gap:6px;align-items:center">
-        <div id="ws-current" onclick="showWorkspaceModal()" style="flex:1;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:7px 10px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:border-color .2s;min-width:0" onmouseover="this.style.borderColor='var(--green)'" onmouseout="this.style.borderColor='var(--border2)'">
-          <span style="font-size:14px;flex-shrink:0" id="ws-icon">👤</span>
-          <span style="font-size:12px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1" id="ws-name">Personal</span>
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;color:var(--text3)"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <button onclick="showWorkspaceModal('new')" title="Novo workspace" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:7px 8px;cursor:pointer;color:var(--text3);flex-shrink:0;transition:all .2s" onmouseover="this.style.color='var(--green)';this.style.borderColor='var(--green)'" onmouseout="this.style.color='var(--text3)';this.style.borderColor='var(--border2)'">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        </button>
-      </div>
-    </div>
-
     <button class="new-ep-btn" onclick="showCreateModal()">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
       Novo Endpoint
@@ -3356,9 +2063,8 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
         <span class="mono" style="font-size:10px;color:var(--text3);flex:1" id="ws-status">Conectando...</span>
       </div>
       <div id="plan-usage" style="width:100%;padding-top:4px;border-top:1px solid #1a1a1a"></div>
-      <div style="display:flex;gap:6px;width:100%;padding-top:4px;border-top:1px solid #131313">
+      <div style="display:flex;gap:12px;width:100%;padding-top:4px;border-top:1px solid #131313">
         <a href="/docs" target="_blank" style="font-size:10px;color:#333;text-decoration:none;flex:1;text-align:center;padding:4px 0;border-radius:4px;border:1px solid #1a1a1a;transition:all .2s" onmouseover="this.style.color='#00FF87';this.style.borderColor='#00FF8733'" onmouseout="this.style.color='#333';this.style.borderColor='#1a1a1a'">📄 Docs</a>
-        <button onclick="showTokenModal()" style="font-size:10px;color:#333;background:none;cursor:pointer;flex:1;text-align:center;padding:4px 0;border-radius:4px;border:1px solid #1a1a1a;transition:all .2s" onmouseover="this.style.color='#7DD3FC';this.style.borderColor='#7DD3FC33'" onmouseout="this.style.color='#333';this.style.borderColor='#1a1a1a'">🔑 Tokens</button>
         <a href="/upgrade" style="font-size:10px;color:#333;text-decoration:none;flex:1;text-align:center;padding:4px 0;border-radius:4px;border:1px solid #1a1a1a;transition:all .2s" id="upgrade-sidebar-link" onmouseover="this.style.color='#ff8c00';this.style.borderColor='#ff8c0033'" onmouseout="this.style.color='#333';this.style.borderColor='#1a1a1a'">⚡ Planos</a>
       </div>
       ${userBarHtml}
@@ -3501,23 +2207,17 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
         <!-- CRUD tab -->
         <div id="tab-content-crud" style="display:none;flex:1;overflow:auto">
           <div style="padding:24px;max-width:900px">
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap">
-              <div style="display:flex;align-items:center;gap:10px;min-width:0">
-                <span style="font-size:22px;flex-shrink:0">🗄️</span>
-                <div>
-                  <h3 style="color:#fff;font-size:16px;margin-bottom:2px">Tabelas CRUD</h3>
-                  <p style="font-size:12px;color:var(--text3)">GET · POST · PUT · PATCH · DELETE automáticos com persistência</p>
-                </div>
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px">
+              <div>
+                <h3 style="color:#fff;font-size:16px;margin-bottom:4px">Tabelas CRUD</h3>
+                <p style="font-size:13px;color:var(--text3)">Defina um caminho e o sistema faz GET/POST/PUT/PATCH/DELETE automaticamente com persistência em memória.</p>
               </div>
-              <div style="display:flex;gap:8px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
-                <button style="background:#F9731615;border:1px solid #F9731644;border-radius:8px;padding:9px 14px;color:#FB923C;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .2s;white-space:nowrap" onclick="showPostmanModal()" onmouseover="this.style.background='#F9731625'" onmouseout="this.style.background='#F9731615'">
-                  📦 Postman
-                </button>
-                <button style="background:#7C3AED15;border:1px solid #7C3AED44;border-radius:8px;padding:9px 14px;color:#A78BFA;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .2s;white-space:nowrap" onclick="showOpenApiModal()" onmouseover="this.style.background='#7C3AED25'" onmouseout="this.style.background='#7C3AED15'">
+              <div style="display:flex;gap:8px">
+                <button style="background:#7C3AED15;border:1px solid #7C3AED44;border-radius:8px;padding:10px 16px;color:#A78BFA;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .2s" onclick="showOpenApiModal()" onmouseover="this.style.background='#7C3AED25'" onmouseout="this.style.background='#7C3AED15'">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                   OpenAPI
                 </button>
-                <button class="btn-primary btn-icon" style="padding:9px 16px;font-size:13px;flex:none;width:auto;white-space:nowrap" onclick="showCrudModal()">
+                <button class="btn-primary btn-icon" style="padding:10px 18px;font-size:13px;flex:none;width:auto" onclick="showCrudModal()">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                   Nova Tabela
                 </button>
@@ -3546,7 +2246,7 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 </div>
 
 <!-- URL TESTER (floating) -->
-<div id="url-tester" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);width:calc(100% - 280px);max-width:620px;background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:14px 18px;z-index:500;box-shadow:0 8px 32px rgba(0,0,0,.6)">
+<div id="url-tester" style="display:none;position:fixed;bottom:24px;left:220px;right:24px;max-width:680px;background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:14px 18px;z-index:500;box-shadow:0 8px 32px rgba(0,0,0,.6)">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
     <span style="font-size:11px;color:var(--text3);font-family:'Space Mono',monospace;letter-spacing:1px">TESTADOR DE URL</span>
     <button onclick="document.getElementById('url-tester').style.display='none'" style="background:none;border:none;color:var(--text4);cursor:pointer;font-size:16px;padding:0 2px">✕</button>
@@ -3565,108 +2265,6 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
     <button onclick="sendTestRequest('GET')" style="background:#00C8FF22;border:1px solid #00C8FF44;border-radius:6px;padding:7px;color:#00C8FF;font-size:11px;font-weight:700;font-family:'Space Mono',monospace;cursor:pointer">GET</button>
     <button onclick="sendTestRequest('POST')" style="background:#00FF8722;border:1px solid #00FF8744;border-radius:6px;padding:7px;color:#00FF87;font-size:11px;font-weight:700;font-family:'Space Mono',monospace;cursor:pointer">POST</button>
     <button onclick="sendTestRequest('DELETE')" style="background:#FF444422;border:1px solid #FF444444;border-radius:6px;padding:7px;color:#FF6B6B;font-size:11px;font-weight:700;font-family:'Space Mono',monospace;cursor:pointer">DELETE</button>
-  </div>
-</div>
-
-<!-- WORKSPACE MODAL -->
-<div id="workspace-modal" class="modal-overlay" style="display:none">
-  <div class="modal" style="width:560px;max-height:85vh;overflow:auto">
-    <div class="modal-row">
-      <h2 class="modal-title" style="margin:0">🏢 Workspaces</h2>
-      <button onclick="closeWorkspaceModal()" style="background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer">✕</button>
-    </div>
-
-    <!-- Tab switcher -->
-    <div style="display:flex;gap:4px;margin-bottom:16px;background:var(--bg3);border-radius:8px;padding:4px">
-      <button id="ws-tab-list"   onclick="switchWsTab('list')"   style="flex:1;padding:7px;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;background:var(--bg2);color:var(--text)">Meus Workspaces</button>
-      <button id="ws-tab-manage" onclick="switchWsTab('manage')" style="flex:1;padding:7px;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;background:transparent;color:var(--text3)">Gerenciar</button>
-    </div>
-
-    <!-- Tab: list -->
-    <div id="ws-tab-content-list">
-      <div id="ws-list-items" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px"></div>
-      <div style="border-top:1px solid var(--border);padding-top:16px">
-        <div style="font-size:11px;color:var(--text3);margin-bottom:8px;letter-spacing:.06em;text-transform:uppercase">Novo Workspace</div>
-        <div style="display:flex;gap:8px">
-          <input id="ws-new-name" class="form-input" placeholder="Nome do workspace (ex: Projeto Alpha)" style="flex:1"/>
-          <button class="btn-primary" style="width:auto;padding:0 16px;flex-shrink:0" onclick="createWorkspace()">Criar</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Tab: manage members -->
-    <div id="ws-tab-content-manage" style="display:none">
-      <div id="ws-manage-header" style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:12px;background:var(--bg3);border-radius:8px">
-        <span id="ws-manage-icon" style="font-size:20px">🏢</span>
-        <div>
-          <div id="ws-manage-name" style="font-size:14px;font-weight:700;color:var(--text)"></div>
-          <div id="ws-manage-role" style="font-size:11px;color:var(--text3);margin-top:2px"></div>
-        </div>
-      </div>
-
-      <!-- Invite -->
-      <div id="ws-invite-section" style="margin-bottom:16px">
-        <div style="font-size:11px;color:var(--text3);margin-bottom:8px;letter-spacing:.06em;text-transform:uppercase">Convidar membro</div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <input id="ws-invite-login" class="form-input" placeholder="GitHub username (ex: andersonrolim)" style="flex:1;min-width:160px"/>
-          <select id="ws-invite-role" class="form-input" style="width:100px;flex-shrink:0">
-            <option value="editor">Editor</option>
-            <option value="viewer">Viewer</option>
-          </select>
-          <button class="btn-primary" style="width:auto;padding:0 14px;flex-shrink:0;font-size:12px" onclick="inviteMember()">Convidar</button>
-        </div>
-        <div style="font-size:11px;color:var(--text3);margin-top:6px">
-          Editor: cria/edita endpoints &nbsp;·&nbsp; Viewer: somente leitura
-        </div>
-      </div>
-
-      <!-- Members list -->
-      <div style="font-size:11px;color:var(--text3);margin-bottom:8px;letter-spacing:.06em;text-transform:uppercase">Membros</div>
-      <div id="ws-members-list" style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto"></div>
-
-      <!-- Pending invites -->
-      <div id="ws-pending-section" style="display:none;margin-top:12px">
-        <div style="font-size:11px;color:var(--text3);margin-bottom:8px;letter-spacing:.06em;text-transform:uppercase">Convites pendentes</div>
-        <div id="ws-pending-list" style="display:flex;flex-direction:column;gap:4px"></div>
-      </div>
-
-      <!-- Danger zone -->
-      <div id="ws-danger-zone" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid #FF4D6D33">
-        <div style="font-size:11px;color:#FF4D6D;margin-bottom:8px;letter-spacing:.06em;text-transform:uppercase">Zona de perigo</div>
-        <button onclick="deleteCurrentWorkspace()" style="background:#FF4D6D15;border:1px solid #FF4D6D44;border-radius:6px;padding:8px 14px;color:#FF4D6D;font-size:12px;cursor:pointer;font-weight:600">🗑 Deletar Workspace</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- API TOKENS MODAL -->
-<div id="token-modal" style="display:none" class="modal-overlay">
-  <div class="modal" style="max-width:520px">
-    <div class="modal-row">
-      <h2 class="modal-title" style="margin:0">🔑 API Tokens</h2>
-      <button onclick="hideTokenModal()" style="background:none;border:none;color:var(--text3);cursor:pointer">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
-    <p style="font-size:12px;color:#555;margin-bottom:16px">Use tokens para autenticar o SDK ou chamadas diretas à API sem precisar de login.</p>
-
-    <div style="display:flex;gap:8px;margin-bottom:16px">
-      <input id="token-name-input" class="form-input" placeholder="Nome do token (ex: CI/CD, projeto-x)" style="flex:1"/>
-      <button class="btn-primary" style="flex:none;width:auto;padding:0 16px;font-size:13px" onclick="createToken()">Gerar</button>
-    </div>
-
-    <div id="token-new-reveal" style="display:none;background:#0a1a0a;border:1px solid #00FF8733;border-radius:8px;padding:12px;margin-bottom:16px">
-      <div style="font-size:10px;color:#00FF87;letter-spacing:1px;margin-bottom:6px;font-family:monospace">✓ TOKEN GERADO — COPIE AGORA, NÃO SERÁ MOSTRADO NOVAMENTE</div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <code id="token-new-value" style="font-family:monospace;font-size:12px;color:#00FF87;flex:1;word-break:break-all"></code>
-        <button onclick="copyNewToken()" style="background:#00FF8722;border:1px solid #00FF8744;border-radius:6px;padding:6px 12px;color:#00FF87;font-size:11px;cursor:pointer;flex-shrink:0">Copiar</button>
-      </div>
-    </div>
-
-    <div style="font-size:11px;color:#333;margin-bottom:8px;text-transform:uppercase;letter-spacing:.06em">Tokens ativos</div>
-    <div id="token-list" style="display:flex;flex-direction:column;gap:6px;max-height:240px;overflow-y:auto">
-      <div style="color:#333;font-size:12px;padding:16px;text-align:center">Carregando...</div>
-    </div>
   </div>
 </div>
 
@@ -3984,13 +2582,6 @@ function handleWsEvent(msg) {
         if (state.selectedEp === endpointId) renderRules();
       }
       break;
-    case 'rule_updated':
-      if (state.rules[endpointId]) {
-        const idx = state.rules[endpointId].findIndex(r => r.id === payload.id);
-        if (idx >= 0) state.rules[endpointId][idx] = payload;
-        if (state.selectedEp === endpointId) renderRules();
-      }
-      break;
     case 'crud_table_updated':
       state.crudTables[payload.key] = { ...payload };
       if (state.selectedEp) renderCrudTables();
@@ -4095,241 +2686,6 @@ async function deleteEndpoint(id, e) {
   e.stopPropagation();
   await api('DELETE', '/api/endpoints/' + id);
   toast('Endpoint removido.', 'error');
-}
-
-// ── WORKSPACE MODAL ────────────────────────────────────────────────────────────
-const wsState = { workspaces: [], currentWsId: null, managingWsId: null };
-
-async function loadWorkspaces() {
-  const list = await api('GET', '/api/workspaces');
-  if (!list || list.error) return;
-  wsState.workspaces = list;
-  // Set current to personal (first owned) or first
-  if (!wsState.currentWsId) {
-    const personal = list.find(w => w.role === 'owner' && w.name.includes('(pessoal)')) || list[0];
-    if (personal) wsState.currentWsId = personal.id;
-  }
-  updateWorkspaceSelector();
-  // Show selector if user is logged in
-  document.getElementById('workspace-selector').style.display = 'block';
-}
-
-function updateWorkspaceSelector() {
-  const ws = wsState.workspaces.find(w => w.id === wsState.currentWsId);
-  if (!ws) return;
-  const isPersonal = ws.name.includes('(pessoal)');
-  document.getElementById('ws-icon').textContent = isPersonal ? '👤' : '🏢';
-  document.getElementById('ws-name').textContent = ws.name.replace(' (pessoal)', '');
-}
-
-function switchWorkspace(wsId) {
-  wsState.currentWsId = wsId;
-  updateWorkspaceSelector();
-  closeWorkspaceModal();
-  // Reload endpoints for this workspace
-  loadEndpointsForWorkspace(wsId);
-}
-
-async function loadEndpointsForWorkspace(wsId) {
-  const eps = await api('GET', '/api/workspaces/' + wsId + '/endpoints');
-  if (eps && !eps.error) {
-    state.endpoints = eps;
-    renderEndpointList();
-    if (eps.length > 0) selectEndpoint(eps[0].id);
-    else {
-      state.selectedEp = null;
-      document.getElementById('main-content').style.display = 'none';
-      document.getElementById('empty-state').style.display = 'flex';
-    }
-  }
-}
-
-function showWorkspaceModal(tab) {
-  document.getElementById('workspace-modal').style.display = 'flex';
-  switchWsTab(tab === 'new' ? 'list' : 'list');
-  renderWsList();
-  if (tab === 'new') {
-    setTimeout(() => document.getElementById('ws-new-name')?.focus(), 100);
-  }
-}
-function closeWorkspaceModal() {
-  document.getElementById('workspace-modal').style.display = 'none';
-}
-function switchWsTab(tab) {
-  ['list','manage'].forEach(t => {
-    document.getElementById('ws-tab-' + t).style.background = t === tab ? 'var(--bg2)' : 'transparent';
-    document.getElementById('ws-tab-' + t).style.color = t === tab ? 'var(--text)' : 'var(--text3)';
-    document.getElementById('ws-tab-content-' + t).style.display = t === tab ? 'block' : 'none';
-  });
-}
-function renderWsList() {
-  const el = document.getElementById('ws-list-items');
-  el.innerHTML = wsState.workspaces.map(function(ws) {
-    const isPersonal = ws.name.includes('(pessoal)');
-    const isCurrent = ws.id === wsState.currentWsId;
-    const displayName = ws.name.replace(' (pessoal)', '');
-    return '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid ' + (isCurrent ? 'var(--green)' : 'var(--border)') + ';border-radius:8px;background:' + (isCurrent ? '#00FF8708' : 'var(--bg3)') + ';cursor:pointer;transition:all .2s" onclick="switchWorkspace(\'' + ws.id + '\')">'
-      + '<span style="font-size:18px">' + (isPersonal ? '👤' : '🏢') + '</span>'
-      + '<div style="flex:1;min-width:0">'
-      + '<div style="font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(displayName) + '</div>'
-      + '<div style="font-size:11px;color:var(--text3)">' + ws.ep_count + ' endpoint(s) · ' + ws.member_count + ' membro(s) · ' + ws.role + '</div>'
-      + '</div>'
-      + (isCurrent ? '<span style="font-size:10px;color:var(--green);font-weight:700;letter-spacing:.06em">ATIVO</span>' : '')
-      + (ws.role === 'owner' && !isPersonal ? '<button onclick="event.stopPropagation();openManage(\'' + ws.id + '\')" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:11px;padding:4px 8px;border-radius:4px;border:1px solid var(--border)" onmouseover="this.style.color=\'var(--text)\'" onmouseout="this.style.color=\'var(--text3)\'">⚙ Gerenciar</button>' : '')
-      + '</div>';
-  }).join('');
-}
-async function openManage(wsId) {
-  wsState.managingWsId = wsId;
-  switchWsTab('manage');
-  const data = await api('GET', '/api/workspaces/' + wsId);
-  if (!data || data.error) return;
-  const isPersonal = data.name.includes('(pessoal)');
-  document.getElementById('ws-manage-name').textContent = data.name.replace(' (pessoal)', '');
-  document.getElementById('ws-manage-role').textContent = 'Você: ' + data.yourRole;
-  document.getElementById('ws-manage-icon').textContent = isPersonal ? '👤' : '🏢';
-  // Invite section — only owner
-  document.getElementById('ws-invite-section').style.display = data.yourRole === 'owner' ? 'block' : 'none';
-  document.getElementById('ws-danger-zone').style.display = (data.yourRole === 'owner' && !isPersonal) ? 'block' : 'none';
-  // Members
-  renderMembers(data.members, data.yourRole, wsId);
-  // Pending invites
-  if (data.pending && data.pending.length > 0) {
-    document.getElementById('ws-pending-section').style.display = 'block';
-    document.getElementById('ws-pending-list').innerHTML = data.pending.map(function(p) {
-      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg3);border-radius:6px;font-size:12px;color:var(--text2)">'
-        + '<span>⏳</span><span style="flex:1">@' + esc(p.github_login) + '</span>'
-        + '<span style="color:var(--text3);font-size:11px">pendente</span></div>';
-    }).join('');
-  } else {
-    document.getElementById('ws-pending-section').style.display = 'none';
-  }
-}
-function renderMembers(members, yourRole, wsId) {
-  document.getElementById('ws-members-list').innerHTML = members.map(function(m) {
-    const isOwner = m.role === 'owner';
-    const canEdit = yourRole === 'owner' && !isOwner;
-    return '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg3);border-radius:8px">'
-      + '<img src="' + esc(m.avatar || '') + '" style="width:28px;height:28px;border-radius:50%;background:var(--border)" onerror="this.style.display=\'none\'">'
-      + '<div style="flex:1;min-width:0">'
-      + '<div style="font-size:12px;font-weight:600;color:var(--text)">@' + esc(m.login) + (m.name ? ' · ' + esc(m.name) : '') + '</div>'
-      + '</div>'
-      + '<select onchange="changeMemberRole(\'' + wsId + '\',\'' + m.id + '\',this.value)" style="background:var(--bg2);border:1px solid var(--border2);border-radius:4px;color:var(--text);font-size:11px;padding:3px 6px;cursor:pointer" ' + (!canEdit ? 'disabled' : '') + '>'
-      + '<option value="owner" ' + (m.role==='owner'?'selected':'') + '>Owner</option>'
-      + '<option value="editor" ' + (m.role==='editor'?'selected':'') + '>Editor</option>'
-      + '<option value="viewer" ' + (m.role==='viewer'?'selected':'') + '>Viewer</option>'
-      + '</select>'
-      + (canEdit ? '<button onclick="removeMember(\'' + wsId + '\',\'' + m.id + '\')" style="background:none;border:none;color:#FF4D6D;cursor:pointer;font-size:16px;padding:0 2px" title="Remover">×</button>' : '')
-      + '</div>';
-  }).join('');
-}
-async function createWorkspace() {
-  const name = document.getElementById('ws-new-name').value.trim();
-  if (!name) return toast('Digite um nome.', 'error');
-  const result = await api('POST', '/api/workspaces', { name });
-  if (result.error) return toast(result.error, 'error');
-  document.getElementById('ws-new-name').value = '';
-  await loadWorkspaces();
-  renderWsList();
-  toast('Workspace criado!', 'success');
-}
-async function inviteMember() {
-  const login = document.getElementById('ws-invite-login').value.trim();
-  const role = document.getElementById('ws-invite-role').value;
-  if (!login) return toast('Digite o GitHub username.', 'error');
-  const result = await api('POST', '/api/workspaces/' + wsState.managingWsId + '/invite', { github_login: login, role });
-  if (result.error) return toast(result.error, 'error');
-  document.getElementById('ws-invite-login').value = '';
-  toast(result.added ? '@' + login + ' adicionado!' : result.message, 'success');
-  openManage(wsState.managingWsId);
-}
-async function changeMemberRole(wsId, userId, role) {
-  if (role === 'owner') return;
-  await api('PATCH', '/api/workspaces/' + wsId + '/members/' + userId, { role });
-  toast('Role atualizado.', 'success');
-}
-async function removeMember(wsId, userId) {
-  await api('DELETE', '/api/workspaces/' + wsId + '/members/' + userId);
-  toast('Membro removido.', 'info');
-  openManage(wsId);
-}
-async function deleteCurrentWorkspace() {
-  const wsId = wsState.managingWsId;
-  if (!wsId) return;
-  if (!confirm('Deletar este workspace e todos os endpoints? Esta ação é irreversível.')) return;
-  const result = await api('DELETE', '/api/workspaces/' + wsId);
-  if (result.error) return toast(result.error, 'error');
-  wsState.managingWsId = null;
-  wsState.currentWsId = null;
-  closeWorkspaceModal();
-  await loadWorkspaces();
-  toast('Workspace deletado.', 'info');
-}
-
-// ── API TOKEN MODAL ────────────────────────────────────────────────────────────
-async function showTokenModal() {
-  document.getElementById('token-modal').style.display = 'flex';
-  document.getElementById('token-new-reveal').style.display = 'none';
-  document.getElementById('token-name-input').value = '';
-  await loadTokenList();
-}
-
-function hideTokenModal() {
-  document.getElementById('token-modal').style.display = 'none';
-}
-
-async function loadTokenList() {
-  const list = document.getElementById('token-list');
-  list.innerHTML = '<div style="color:#333;font-size:12px;padding:16px;text-align:center">Carregando...</div>';
-  try {
-    const tokens = await api('GET', '/api/tokens');
-    if (!tokens || tokens.length === 0) {
-      list.innerHTML = '<div style="color:#333;font-size:12px;padding:16px;text-align:center">Nenhum token ainda. Gere um acima.</div>';
-      return;
-    }
-    list.innerHTML = tokens.map(t => {
-      const lastUsed = t.last_used ? new Date(t.last_used).toLocaleDateString('pt-BR') : 'nunca';
-      const created  = (t.created_at||'').slice(0,10);
-      return '<div style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:10px">'
-        + '<div style="flex:1;min-width:0">'
-        + '<div style="font-size:13px;color:#ccc;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(t.name) + '</div>'
-        + '<div style="font-size:10px;color:#444;font-family:monospace;margin-top:2px">' + t.token_preview + ' · criado ' + created + ' · usado ' + lastUsed + '</div>'
-        + '</div>'
-        + '<button data-tid="'+t.id+'" onclick="deleteToken(this)" class="revoke-btn">Revogar</button>'
-        + '</div>';
-    }).join('');
-  } catch(e) {
-    list.innerHTML = '<div style="color:#555;font-size:12px;padding:16px;text-align:center">Erro ao carregar tokens.</div>';
-  }
-}
-
-async function createToken() {
-  const nameInput = document.getElementById('token-name-input');
-  const name = nameInput.value.trim() || ('Token ' + new Date().toLocaleDateString('pt-BR'));
-  try {
-    const data = await api('POST', '/api/tokens', { name });
-    if (!data || !data.token) { toast('Erro ao gerar token', 'error'); return; }
-    document.getElementById('token-new-value').textContent = data.token;
-    document.getElementById('token-new-reveal').style.display = 'block';
-    nameInput.value = '';
-    await loadTokenList();
-    toast('Token gerado! Copie agora — não será exibido novamente.', 'success');
-  } catch(e) {
-    toast('Erro ao gerar token', 'error');
-  }
-}
-
-function copyNewToken() {
-  const val = document.getElementById('token-new-value').textContent;
-  navigator.clipboard.writeText(val).then(() => toast('Token copiado!', 'success'));
-}
-
-async function deleteToken(btn) {
-  const id = btn.dataset.tid;
-  if (!confirm('Revogar este token? Aplicações que o usam perderão acesso.')) return;
-  await api('DELETE', '/api/tokens/' + id);
-  toast('Token revogado.', 'error');
-  await loadTokenList();
 }
 
 function emptyCtaClick() {
@@ -4636,43 +2992,15 @@ function renderInspectorContent() {
 
 // ── RULES ─────────────────────────────────────────────────────────────────────
 function showRuleModal() {
-  state._editingRuleId = null;
   document.getElementById('rule-path').value = '';
   document.getElementById('rule-method').value = '*';
   document.getElementById('rule-status').value = '200';
   document.getElementById('rule-delay').value = '0';
   document.getElementById('delay-val').textContent = '0';
   document.getElementById('rule-body').value = '{\\n  "message": "Mock response"\\n}';
-  const title = document.querySelector('#rule-modal .modal-title');
-  if (title) title.textContent = 'Nova Mock Rule';
-  const btn = document.querySelector('#rule-modal .btn-primary');
-  if (btn) btn.textContent = 'Salvar Regra';
   document.getElementById('rule-modal').style.display = 'flex';
 }
-function hideRuleModal() {
-  state._editingRuleId = null;
-  document.getElementById('rule-modal').style.display = 'none';
-}
-function editRule(epId, ruleId) {
-  const rules = state.rules[epId] || [];
-  const r = rules.find(x => x.id === ruleId);
-  if (!r) return;
-  state._editingRuleId = ruleId;
-  document.getElementById('rule-path').value   = r.path   || '';
-  document.getElementById('rule-method').value = r.method || '*';
-  document.getElementById('rule-status').value = r.status || 200;
-  document.getElementById('rule-delay').value  = r.delay  || 0;
-  document.getElementById('delay-val').textContent = r.delay || 0;
-  // Pretty-print JSON body if possible
-  let body = r.body || '';
-  try { body = JSON.stringify(JSON.parse(body), null, 2); } catch(_) {}
-  document.getElementById('rule-body').value = body;
-  const title = document.querySelector('#rule-modal .modal-title');
-  if (title) title.textContent = 'Editar Mock Rule';
-  const btn = document.querySelector('#rule-modal .btn-primary');
-  if (btn) btn.textContent = 'Atualizar Regra';
-  document.getElementById('rule-modal').style.display = 'flex';
-}
+function hideRuleModal() { document.getElementById('rule-modal').style.display = 'none'; }
 
 async function createRule() {
   const epId = state.selectedEp;
@@ -4683,14 +3011,9 @@ async function createRule() {
     delay:  parseInt(document.getElementById('rule-delay').value) || 0,
     body:   document.getElementById('rule-body').value,
   };
-  if (state._editingRuleId) {
-    await api('PATCH', '/api/rules/' + epId + '/' + state._editingRuleId, rule);
-    toast('Regra atualizada!', 'success');
-  } else {
-    await api('POST', '/api/rules/' + epId, rule);
-    toast('Regra salva!', 'success');
-  }
+  await api('POST', '/api/rules/' + epId, rule);
   hideRuleModal();
+  toast('Regra salva!', 'success');
 }
 
 async function deleteRule(epId, ruleId) {
@@ -4717,12 +3040,12 @@ function renderRules() {
   list.innerHTML = rules.map(r => {
     const sc = STATUS_COLORS[r.status] || {bg:'#555',t:'#fff'};
     const mc = METHOD_COLORS[r.method] || '#aaa';
-    return \`<div class="rule-item" onclick="editRule('\${epId}','\${r.id}')" style="cursor:pointer" title="Clique para editar">
+    return \`<div class="rule-item">
       <span class="method" style="color:\${mc}">\${r.method}</span>
       <code class="rule-path">\${esc(r.path || '/*')}</code>
       <span class="status" style="background:\${sc.bg};color:\${sc.t}">\${r.status}</span>
       \${r.delay ? \`<span class="rule-delay">+\${r.delay}ms</span>\` : ''}
-      <button class="rule-del" onclick="event.stopPropagation();deleteRule('\${epId}','\${r.id}')">
+      <button class="rule-del" onclick="deleteRule('\${epId}','\${r.id}')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
       </button>
     </div>\`;
@@ -5263,101 +3586,6 @@ async function importOpenAPI() {
   toast('Importado: ' + result.rulesCreated + ' regras + ' + result.tablesCreated + ' tabelas', 'success');
 }
 
-// ── POSTMAN IMPORT ────────────────────────────────────────────────────────────
-function showPostmanModal() {
-  document.getElementById('postman-json').value = '';
-  document.getElementById('postman-preview').style.display = 'none';
-  document.getElementById('postman-result').style.display = 'none';
-  document.getElementById('postman-import-btn').disabled = true;
-  document.getElementById('postman-import-btn').style.opacity = '.5';
-  document.getElementById('postman-modal').style.display = 'flex';
-}
-function closePostmanModal() {
-  document.getElementById('postman-modal').style.display = 'none';
-}
-function handlePostmanDrop(e) {
-  e.preventDefault();
-  const dz = document.getElementById('postman-drop-zone');
-  dz.style.borderColor = 'var(--border2)'; dz.style.background = '';
-  const file = e.dataTransfer.files[0];
-  if (!file) return;
-  readPostmanFile(file);
-}
-function handlePostmanFile(input) {
-  if (!input.files[0]) return;
-  readPostmanFile(input.files[0]);
-}
-function readPostmanFile(file) {
-  const reader = new FileReader();
-  reader.onload = e => {
-    document.getElementById('postman-json').value = e.target.result;
-    previewPostman();
-  };
-  reader.readAsText(file);
-}
-async function previewPostman() {
-  const raw = document.getElementById('postman-json').value.trim();
-  if (!raw) { toast('Cole o JSON da collection.', 'error'); return; }
-  let collection;
-  try { collection = JSON.parse(raw); } catch(_) { toast('JSON inválido.', 'error'); return; }
-  const btn = document.getElementById('postman-preview-btn');
-  btn.textContent = '⏳ Analisando...'; btn.disabled = true;
-  const result = await api('POST', '/api/postman/preview', { collection });
-  btn.textContent = '👁 Preview'; btn.disabled = false;
-  if (result.error) { toast(result.error, 'error'); return; }
-  // Render preview
-  const list = document.getElementById('postman-preview-list');
-  list.innerHTML = renderPostmanPreview(result.endpoints);
-  const total = result.endpoints.reduce((s,e)=>s+e.rules.length,0);
-  document.getElementById('postman-preview').style.display = 'block';
-  document.getElementById('postman-import-btn').disabled = false;
-  document.getElementById('postman-import-btn').style.opacity = '1';
-  toast('Preview: ' + result.endpoints.length + ' endpoint(s), ' + total + ' requests', 'success');
-}
-async function importPostman() {
-  const raw = document.getElementById('postman-json').value.trim();
-  if (!raw) return;
-  let collection;
-  try { collection = JSON.parse(raw); } catch(_) { toast('JSON inválido.', 'error'); return; }
-  const btn = document.getElementById('postman-import-btn');
-  btn.textContent = '⏳ Importando...'; btn.disabled = true;
-  const result = await api('POST', '/api/postman', { collection });
-  btn.textContent = 'Importar'; btn.disabled = false;
-  if (result.error) { toast(result.error, 'error'); return; }
-  const resEl = document.getElementById('postman-result');
-  resEl.style.display = 'block';
-  const total = result.details.reduce((s,e)=>s+e.rules,0);
-  resEl.innerHTML = '✓ <strong>' + esc(result.details[0]?.name || 'Collection') + '</strong> importada!<br>'
-    + result.endpoints + ' endpoint(s) criado(s) · ' + total + ' mock rules';
-  // Reload endpoints list
-  const eps = await api('GET', '/api/endpoints');
-  if (eps && !eps.error) {
-    state.endpoints = eps;
-    renderEndpointList();
-    if (eps.length > 0 && !state.selectedEp) selectEndpoint(eps[eps.length-1].id);
-  }
-  toast('Collection importada: ' + total + ' regras criadas!', 'success');
-}
-function methodColor(m) {
-  return { GET:'#00C8FF', POST:'#00FF87', PUT:'#FFD23F', PATCH:'#FB923C', DELETE:'#FF4D6D' }[m] || '#94A3B8';
-}
-function renderPostmanPreview(endpoints) {
-  return endpoints.map(function(ep) {
-    var rows = ep.rules.map(function(r) {
-      var c = methodColor(r.method);
-      return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)">'
-        + '<span style="font-size:10px;font-weight:700;color:' + c + ';background:' + c + '18;padding:2px 7px;border-radius:4px;min-width:46px;text-align:center">' + esc(r.method) + '</span>'
-        + '<span style="font-size:12px;color:var(--text2);font-family:var(--mono)">' + esc(r.path) + '</span>'
-        + '<span style="margin-left:auto;font-size:11px;color:var(--text3)">' + r.status + '</span>'
-        + '</div>';
-    }).join('');
-    return '<div style="margin-bottom:12px">'
-      + '<div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:6px">📁 ' + esc(ep.name) + '</div>'
-      + rows
-      + '</div>';
-  }).join('');
-}
-
 // ── VERSIONING (via Mock Rules) ───────────────────────────────────────────────
 // API versioning is done with Mock Rules. /v1/users and /v2/users = two different rules.
 // createVersionedRule() pre-fills the rule modal to make it easy.
@@ -5394,8 +3622,6 @@ async function init() {
   }
   connectWS();
   updatePlanUsage();
-  // Load workspaces (non-blocking)
-  loadWorkspaces().catch(() => {});
 }
 
 init();
@@ -5404,8 +3630,7 @@ init();
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     hideCreateModal(); hideRuleModal(); hideCrudModal(); hideCrudDataModal();
-    closeWorkspaceModal(); closePostmanModal();
-    ['add-row-modal','delay-modal','openapi-modal','faker-modal','postman-modal','workspace-modal'].forEach(id => {
+    ['add-row-modal','delay-modal','openapi-modal','faker-modal'].forEach(id => {
       const el = document.getElementById(id); if (el) el.style.display = 'none';
     });
   }
@@ -5470,46 +3695,6 @@ paths:
     <div class="btn-row">
       <button class="btn-cancel" onclick="document.getElementById('openapi-modal').style.display='none'">Cancelar</button>
       <button class="btn-primary" onclick="importOpenAPI()">Importar Spec</button>
-    </div>
-  </div>
-</div>
-
-<!-- ── FAKER SEED MODAL ───────────────────────────────────────────────────── -->
-<div id="postman-modal" class="modal-overlay" style="display:none">
-  <div class="modal" style="width:640px;max-height:85vh;overflow:auto">
-    <div class="modal-row">
-      <h2 class="modal-title" style="margin:0">📦 Import Postman Collection</h2>
-      <button onclick="closePostmanModal()" style="background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer">✕</button>
-    </div>
-    <p style="font-size:12px;color:var(--text3);margin:0 0 16px">No Postman: <strong style="color:var(--text)">Export → Collection v2.1</strong> → cole o JSON abaixo.<br/>Serão criadas <strong style="color:var(--text)">Mock Rules</strong> para cada request da collection.</p>
-
-    <div id="postman-drop-zone" style="border:2px dashed var(--border2);border-radius:10px;padding:32px;text-align:center;cursor:pointer;transition:all .2s;margin-bottom:16px"
-      onclick="document.getElementById('postman-file-input').click()"
-      ondragover="event.preventDefault();this.style.borderColor='var(--green)';this.style.background='#00FF8708'"
-      ondragleave="this.style.borderColor='var(--border2)';this.style.background=''"
-      ondrop="handlePostmanDrop(event)">
-      <div style="font-size:28px;margin-bottom:8px">📂</div>
-      <div style="font-size:13px;color:var(--text2)">Arraste o arquivo <code style="color:var(--green)">.json</code> aqui</div>
-      <div style="font-size:11px;color:var(--text3);margin-top:4px">ou clique para selecionar</div>
-      <input type="file" id="postman-file-input" accept=".json" style="display:none" onchange="handlePostmanFile(this)"/>
-    </div>
-
-    <div style="text-align:center;font-size:11px;color:var(--text3);margin-bottom:12px">— ou cole o JSON diretamente —</div>
-
-    <textarea class="form-textarea" id="postman-json" rows="8" style="font-size:11px" placeholder='{"info":{"name":"Minha API",...},"item":[...]}'></textarea>
-
-    <!-- Preview area -->
-    <div id="postman-preview" style="display:none;margin-top:12px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:16px;max-height:240px;overflow-y:auto">
-      <div style="font-size:11px;color:var(--text3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px">Preview — o que será importado</div>
-      <div id="postman-preview-list"></div>
-    </div>
-
-    <div id="postman-result" style="display:none;background:#0A1A0A;border:1px solid #00FF8733;border-radius:8px;padding:12px;margin-top:12px;font-size:13px;color:var(--green);font-family:var(--mono)"></div>
-
-    <div class="btn-row" style="margin-top:16px">
-      <button class="btn-cancel" onclick="closePostmanModal()">Cancelar</button>
-      <button id="postman-preview-btn" class="btn-secondary" onclick="previewPostman()" style="width:auto;padding:0 16px">👁 Preview</button>
-      <button id="postman-import-btn" class="btn-primary" onclick="importPostman()" disabled style="opacity:.5">Importar</button>
     </div>
   </div>
 </div>
