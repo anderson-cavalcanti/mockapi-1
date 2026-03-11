@@ -138,7 +138,6 @@ db.exec(`
     FOREIGN KEY (user_id)      REFERENCES users(id)      ON DELETE CASCADE
   );
   CREATE INDEX IF NOT EXISTS idx_wm_user      ON workspace_members(user_id);
-  CREATE INDEX IF NOT EXISTS idx_ep_workspace ON endpoints(workspace_id);
   CREATE TABLE IF NOT EXISTS workspace_invites (
     id           TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
@@ -169,6 +168,8 @@ for (const p of planSeeds) insertPlan.run(p.plan, p.ep_limit, p.req_per_day, p.l
 
 try { db.exec(`ALTER TABLE endpoints ADD COLUMN user_id TEXT`); } catch(_) {}
 try { db.exec(`ALTER TABLE endpoints ADD COLUMN workspace_id TEXT`); } catch(_) {}
+// Index on workspace_id must come AFTER the column is guaranteed to exist
+try { db.exec(`CREATE INDEX IF NOT EXISTS idx_ep_workspace ON endpoints(workspace_id)`); } catch(_) {}
 
 // Migrate: create personal workspace for users who don't have one yet
 // and assign their orphaned endpoints to it
