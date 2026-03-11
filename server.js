@@ -4005,7 +4005,8 @@ async function api(method, path, body) {
   const opts = { method, headers: {'Content-Type':'application/json'} };
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(path, opts);
-  return r.json();
+  try { return await r.json(); }
+  catch(_) { return { error: 'HTTP ' + r.status, status: r.status }; }
 }
 
 // ── ENDPOINT MANAGEMENT ───────────────────────────────────────────────────────
@@ -4148,8 +4149,13 @@ async function loadEndpointsForWorkspace(wsId) {
 
 function showWorkspaceModal(tab) {
   document.getElementById('workspace-modal').style.display = 'flex';
-  switchWsTab(tab === 'new' ? 'list' : 'list');
-  renderWsList();
+  // If manage tab requested and we have a current workspace, open it directly
+  if (tab === 'manage' && wsState.currentWsId) {
+    openManage(wsState.currentWsId);
+  } else {
+    switchWsTab('list');
+    renderWsList();
+  }
   if (tab === 'new') {
     setTimeout(() => document.getElementById('ws-new-name')?.focus(), 100);
   }
@@ -4239,14 +4245,16 @@ async function createWorkspace() {
   toast('Workspace criado!', 'success');
 }
 async function inviteMember() {
+  const wsId = wsState.managingWsId || wsState.currentWsId;
+  if (!wsId) return toast('Selecione um workspace primeiro.', 'error');
   const login = document.getElementById('ws-invite-login').value.trim();
   const role = document.getElementById('ws-invite-role').value;
   if (!login) return toast('Digite o GitHub username.', 'error');
-  const result = await api('POST', '/api/workspaces/' + wsState.managingWsId + '/invite', { github_login: login, role });
-  if (result.error) return toast(result.error, 'error');
+  const result = await api('POST', '/api/workspaces/' + wsId + '/invite', { github_login: login, role });
+  if (!result || result.error) return toast((result && result.error) || 'Erro ao convidar.', 'error');
   document.getElementById('ws-invite-login').value = '';
-  toast(result.added ? '@' + login + ' adicionado!' : result.message, 'success');
-  openManage(wsState.managingWsId);
+  toast(result.added ? '@' + login + ' adicionado!' : (result.message || 'Convite enviado!'), 'success');
+  openManage(wsId);
 }
 async function changeMemberRole(wsId, userId, role) {
   if (role === 'owner') return;
