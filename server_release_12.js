@@ -69,29 +69,14 @@ function parsePostmanCollection(col, user, existingEpId) {
         rawUrl = rawUrl.replace(/^https?:\/\/[^\/]+/, '').replace(/\{\{[^}]+\}\}/g, '').replace(/^\/+/, '/') || '/';
         // Remove query string
         const path = rawUrl.split('?')[0] || '/';
-        // Extract example response body
+        // Extract example response
         let status = 200;
         let body = '{"ok":true}';
-        // 1. Try example response first
         if (item.response && item.response.length > 0) {
           const ex = item.response[0];
           status = parseInt(ex.status || ex.code || 200) || 200;
           if (ex.body) {
             try { JSON.parse(ex.body); body = ex.body; } catch(_) { body = JSON.stringify({ message: ex.body }); }
-          }
-        }
-        // 2. If no example response body, use request body as template
-        if (body === '{"ok":true}' && req.body) {
-          let reqBody = '';
-          if (req.body.mode === 'raw' && req.body.raw) {
-            reqBody = req.body.raw;
-          } else if (req.body.mode === 'formdata' && req.body.formdata) {
-            const obj = {};
-            (req.body.formdata || []).forEach(f => { if (f.key) obj[f.key] = f.value || ''; });
-            reqBody = JSON.stringify(obj, null, 2);
-          }
-          if (reqBody) {
-            try { JSON.parse(reqBody); body = reqBody; } catch(_) { body = JSON.stringify({ raw: reqBody }); }
           }
         }
         rules.push({ method, path, status, body, name: item.name || `${method} ${path}` });
@@ -844,16 +829,6 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
     db.deleteRule(delRuleMatch[2]);
     broadcast(delRuleMatch[1], 'rule_deleted', { id: delRuleMatch[2] });
     return json(res, { ok: true });
-  }
-  if (method === 'PATCH' && delRuleMatch) {
-    const body = await readBody(req);
-    let data = {}; try { data = JSON.parse(body); } catch(_) {}
-    const existing = db.getRule(delRuleMatch[2]);
-    if (!existing) return json(res, { error: 'Rule not found' }, 404);
-    const updated = { ...existing, ...data, id: existing.id, endpointId: existing.endpointId };
-    db.saveRule(updated);
-    broadcast(delRuleMatch[1], 'rule_updated', updated);
-    return json(res, updated);
   }
 
   // ── CRUD TABLE MANAGEMENT
@@ -3346,23 +3321,20 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
         <!-- CRUD tab -->
         <div id="tab-content-crud" style="display:none;flex:1;overflow:auto">
           <div style="padding:24px;max-width:900px">
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap">
-              <div style="display:flex;align-items:center;gap:10px;min-width:0">
-                <span style="font-size:22px;flex-shrink:0">🗄️</span>
-                <div>
-                  <h3 style="color:#fff;font-size:16px;margin-bottom:2px">Tabelas CRUD</h3>
-                  <p style="font-size:12px;color:var(--text3)">GET · POST · PUT · PATCH · DELETE automáticos com persistência</p>
-                </div>
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px">
+              <div>
+                <h3 style="color:#fff;font-size:16px;margin-bottom:4px">Tabelas CRUD</h3>
+                <p style="font-size:13px;color:var(--text3)">Defina um caminho e o sistema faz GET/POST/PUT/PATCH/DELETE automaticamente com persistência em memória.</p>
               </div>
-              <div style="display:flex;gap:8px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
-                <button style="background:#F9731615;border:1px solid #F9731644;border-radius:8px;padding:9px 14px;color:#FB923C;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .2s;white-space:nowrap" onclick="showPostmanModal()" onmouseover="this.style.background='#F9731625'" onmouseout="this.style.background='#F9731615'">
+              <div style="display:flex;gap:8px">
+                <button style="background:#F97316;background:#F9731615;border:1px solid #F9731644;border-radius:8px;padding:10px 16px;color:#FB923C;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .2s" onclick="showPostmanModal()" onmouseover="this.style.background='#F9731625'" onmouseout="this.style.background='#F9731615'">
                   📦 Postman
                 </button>
-                <button style="background:#7C3AED15;border:1px solid #7C3AED44;border-radius:8px;padding:9px 14px;color:#A78BFA;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .2s;white-space:nowrap" onclick="showOpenApiModal()" onmouseover="this.style.background='#7C3AED25'" onmouseout="this.style.background='#7C3AED15'">
+                <button style="background:#7C3AED15;border:1px solid #7C3AED44;border-radius:8px;padding:10px 16px;color:#A78BFA;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .2s" onclick="showOpenApiModal()" onmouseover="this.style.background='#7C3AED25'" onmouseout="this.style.background='#7C3AED15'">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                   OpenAPI
                 </button>
-                <button class="btn-primary btn-icon" style="padding:9px 16px;font-size:13px;flex:none;width:auto;white-space:nowrap" onclick="showCrudModal()">
+                <button class="btn-primary btn-icon" style="padding:10px 18px;font-size:13px;flex:none;width:auto" onclick="showCrudModal()">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                   Nova Tabela
                 </button>
@@ -3391,7 +3363,7 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 </div>
 
 <!-- URL TESTER (floating) -->
-<div id="url-tester" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);width:calc(100% - 280px);max-width:620px;background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:14px 18px;z-index:500;box-shadow:0 8px 32px rgba(0,0,0,.6)">
+<div id="url-tester" style="display:none;position:fixed;bottom:24px;left:220px;right:24px;max-width:680px;background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:14px 18px;z-index:500;box-shadow:0 8px 32px rgba(0,0,0,.6)">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
     <span style="font-size:11px;color:var(--text3);font-family:'Space Mono',monospace;letter-spacing:1px">TESTADOR DE URL</span>
     <button onclick="document.getElementById('url-tester').style.display='none'" style="background:none;border:none;color:var(--text4);cursor:pointer;font-size:16px;padding:0 2px">✕</button>
@@ -3755,13 +3727,6 @@ function handleWsEvent(msg) {
     case 'rule_deleted':
       if (state.rules[endpointId]) {
         state.rules[endpointId] = state.rules[endpointId].filter(r => r.id !== payload.id);
-        if (state.selectedEp === endpointId) renderRules();
-      }
-      break;
-    case 'rule_updated':
-      if (state.rules[endpointId]) {
-        const idx = state.rules[endpointId].findIndex(r => r.id === payload.id);
-        if (idx >= 0) state.rules[endpointId][idx] = payload;
         if (state.selectedEp === endpointId) renderRules();
       }
       break;
@@ -4241,43 +4206,15 @@ function renderInspectorContent() {
 
 // ── RULES ─────────────────────────────────────────────────────────────────────
 function showRuleModal() {
-  state._editingRuleId = null;
   document.getElementById('rule-path').value = '';
   document.getElementById('rule-method').value = '*';
   document.getElementById('rule-status').value = '200';
   document.getElementById('rule-delay').value = '0';
   document.getElementById('delay-val').textContent = '0';
   document.getElementById('rule-body').value = '{\\n  "message": "Mock response"\\n}';
-  const title = document.querySelector('#rule-modal .modal-title');
-  if (title) title.textContent = 'Nova Mock Rule';
-  const btn = document.querySelector('#rule-modal .btn-primary');
-  if (btn) btn.textContent = 'Salvar Regra';
   document.getElementById('rule-modal').style.display = 'flex';
 }
-function hideRuleModal() {
-  state._editingRuleId = null;
-  document.getElementById('rule-modal').style.display = 'none';
-}
-function editRule(epId, ruleId) {
-  const rules = state.rules[epId] || [];
-  const r = rules.find(x => x.id === ruleId);
-  if (!r) return;
-  state._editingRuleId = ruleId;
-  document.getElementById('rule-path').value   = r.path   || '';
-  document.getElementById('rule-method').value = r.method || '*';
-  document.getElementById('rule-status').value = r.status || 200;
-  document.getElementById('rule-delay').value  = r.delay  || 0;
-  document.getElementById('delay-val').textContent = r.delay || 0;
-  // Pretty-print JSON body if possible
-  let body = r.body || '';
-  try { body = JSON.stringify(JSON.parse(body), null, 2); } catch(_) {}
-  document.getElementById('rule-body').value = body;
-  const title = document.querySelector('#rule-modal .modal-title');
-  if (title) title.textContent = 'Editar Mock Rule';
-  const btn = document.querySelector('#rule-modal .btn-primary');
-  if (btn) btn.textContent = 'Atualizar Regra';
-  document.getElementById('rule-modal').style.display = 'flex';
-}
+function hideRuleModal() { document.getElementById('rule-modal').style.display = 'none'; }
 
 async function createRule() {
   const epId = state.selectedEp;
@@ -4288,14 +4225,9 @@ async function createRule() {
     delay:  parseInt(document.getElementById('rule-delay').value) || 0,
     body:   document.getElementById('rule-body').value,
   };
-  if (state._editingRuleId) {
-    await api('PATCH', '/api/rules/' + epId + '/' + state._editingRuleId, rule);
-    toast('Regra atualizada!', 'success');
-  } else {
-    await api('POST', '/api/rules/' + epId, rule);
-    toast('Regra salva!', 'success');
-  }
+  await api('POST', '/api/rules/' + epId, rule);
   hideRuleModal();
+  toast('Regra salva!', 'success');
 }
 
 async function deleteRule(epId, ruleId) {
@@ -4322,12 +4254,12 @@ function renderRules() {
   list.innerHTML = rules.map(r => {
     const sc = STATUS_COLORS[r.status] || {bg:'#555',t:'#fff'};
     const mc = METHOD_COLORS[r.method] || '#aaa';
-    return \`<div class="rule-item" onclick="editRule('\${epId}','\${r.id}')" style="cursor:pointer" title="Clique para editar">
+    return \`<div class="rule-item">
       <span class="method" style="color:\${mc}">\${r.method}</span>
       <code class="rule-path">\${esc(r.path || '/*')}</code>
       <span class="status" style="background:\${sc.bg};color:\${sc.t}">\${r.status}</span>
       \${r.delay ? \`<span class="rule-delay">+\${r.delay}ms</span>\` : ''}
-      <button class="rule-del" onclick="event.stopPropagation();deleteRule('\${epId}','\${r.id}')">
+      <button class="rule-del" onclick="deleteRule('\${epId}','\${r.id}')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
       </button>
     </div>\`;
