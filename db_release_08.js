@@ -147,30 +147,24 @@ db.exec(`
     FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
   );
   CREATE TABLE IF NOT EXISTS plan_config (
-    plan          TEXT PRIMARY KEY,
-    ep_limit      INTEGER NOT NULL,
-    req_per_day   INTEGER NOT NULL,
-    label         TEXT NOT NULL,
-    enabled       INTEGER DEFAULT 1,
-    price_brl     INTEGER DEFAULT 0,
-    member_limit  INTEGER DEFAULT 1
+    plan        TEXT PRIMARY KEY,
+    ep_limit    INTEGER NOT NULL,
+    req_per_day INTEGER NOT NULL,
+    label       TEXT NOT NULL,
+    enabled     INTEGER DEFAULT 1,
+    price_brl   INTEGER DEFAULT 0
   );
 `);
 
 // Seed default plan config if not exists
 const planSeeds = [
-  { plan:'free',       ep_limit:3,       req_per_day:1000,      label:'Free',       enabled:1, price_brl:0,   member_limit:1      },
-  { plan:'pro',        ep_limit:50,      req_per_day:100000,    label:'Pro',        enabled:1, price_brl:59,  member_limit:3      },
-  { plan:'team',       ep_limit:200,     req_per_day:1000000,   label:'Team',       enabled:1, price_brl:199, member_limit:10     },
-  { plan:'enterprise', ep_limit:999999,  req_per_day:999999999, label:'Enterprise', enabled:1, price_brl:0,   member_limit:999999 },
+  { plan:'free',       ep_limit:3,          req_per_day:1000,    label:'Free',       enabled:1, price_brl:0   },
+  { plan:'pro',        ep_limit:50,         req_per_day:100000,  label:'Pro',        enabled:1, price_brl:59  },
+  { plan:'team',       ep_limit:200,        req_per_day:1000000, label:'Team',       enabled:1, price_brl:199 },
+  { plan:'enterprise', ep_limit:999999,     req_per_day:999999999,label:'Enterprise',enabled:1, price_brl:0  },
 ];
-const insertPlan = db.prepare(`INSERT OR IGNORE INTO plan_config (plan,ep_limit,req_per_day,label,enabled,price_brl,member_limit) VALUES (?,?,?,?,?,?,?)`);
-for (const p of planSeeds) insertPlan.run(p.plan, p.ep_limit, p.req_per_day, p.label, p.enabled, p.price_brl, p.member_limit);
-// Migrate existing DB: add member_limit column and set correct defaults
-try { db.exec(`ALTER TABLE plan_config ADD COLUMN member_limit INTEGER DEFAULT 1`); } catch(_) {}
-db.prepare(`UPDATE plan_config SET member_limit=3       WHERE plan='pro'        AND member_limit<=1`).run();
-db.prepare(`UPDATE plan_config SET member_limit=10      WHERE plan='team'       AND member_limit<=1`).run();
-db.prepare(`UPDATE plan_config SET member_limit=999999  WHERE plan='enterprise' AND member_limit<=1`).run();
+const insertPlan = db.prepare(`INSERT OR IGNORE INTO plan_config (plan,ep_limit,req_per_day,label,enabled,price_brl) VALUES (?,?,?,?,?,?)`);
+for (const p of planSeeds) insertPlan.run(p.plan, p.ep_limit, p.req_per_day, p.label, p.enabled, p.price_brl);
 
 try { db.exec(`ALTER TABLE endpoints ADD COLUMN user_id TEXT`); } catch(_) {}
 try { db.exec(`ALTER TABLE endpoints ADD COLUMN workspace_id TEXT`); } catch(_) {}
@@ -235,7 +229,6 @@ function rowToCrudTable(r) {
 module.exports = {
   // USERS
   getUserById(id)         { return rowToUser(db.prepare(`SELECT * FROM users WHERE id=?`).get(id)); },
-  getUserByLogin(login)   { return rowToUser(db.prepare(`SELECT * FROM users WHERE LOWER(login)=LOWER(?)`).get(login)); },
   getUserByGithubId(gid)  { return rowToUser(db.prepare(`SELECT * FROM users WHERE github_id=?`).get(String(gid))); },
   upsertUser(u) {
     db.prepare(`INSERT INTO users (id,github_id,login,name,email,avatar,plan,is_admin,last_login)
@@ -296,23 +289,21 @@ module.exports = {
   // Plan config (admin-managed)
   getPlanConfig(plan) {
     const row = db.prepare(`SELECT * FROM plan_config WHERE plan=?`).get(plan);
-    if (!row) return { plan, ep_limit:3, req_per_day:1000, label:plan, enabled:1, price_brl:0, member_limit:1 };
-    return { ...row, member_limit: row.member_limit ?? 1 };
+    if (!row) return { plan, ep_limit:3, req_per_day:1000, label:plan, enabled:1, price_brl:0 };
+    return row;
   },
   getAllPlanConfigs() { return db.prepare(`SELECT * FROM plan_config ORDER BY price_brl`).all(); },
   updatePlanConfig(plan, fields) {
     const sets=[],vals=[];
-    if (fields.ep_limit      !==undefined){sets.push('ep_limit=?');     vals.push(fields.ep_limit);}
-    if (fields.req_per_day   !==undefined){sets.push('req_per_day=?');  vals.push(fields.req_per_day);}
-    if (fields.label         !==undefined){sets.push('label=?');        vals.push(fields.label);}
-    if (fields.enabled       !==undefined){sets.push('enabled=?');      vals.push(fields.enabled?1:0);}
-    if (fields.price_brl     !==undefined){sets.push('price_brl=?');    vals.push(fields.price_brl);}
-    if (fields.member_limit  !==undefined){sets.push('member_limit=?'); vals.push(fields.member_limit);}
+    if (fields.ep_limit    !==undefined){sets.push('ep_limit=?');    vals.push(fields.ep_limit);}
+    if (fields.req_per_day !==undefined){sets.push('req_per_day=?'); vals.push(fields.req_per_day);}
+    if (fields.label       !==undefined){sets.push('label=?');       vals.push(fields.label);}
+    if (fields.enabled     !==undefined){sets.push('enabled=?');     vals.push(fields.enabled?1:0);}
+    if (fields.price_brl   !==undefined){sets.push('price_brl=?');   vals.push(fields.price_brl);}
     if (sets.length) { vals.push(plan); db.prepare(`UPDATE plan_config SET ${sets.join(',')} WHERE plan=?`).run(...vals); }
     return db.prepare(`SELECT * FROM plan_config WHERE plan=?`).get(plan);
   },
   countUserEndpoints(userId) { return db.prepare(`SELECT COUNT(*) as n FROM endpoints WHERE user_id=?`).get(userId)?.n||0; },
-  countWorkspaceEndpoints(wsId) { return db.prepare(`SELECT COUNT(*) as n FROM endpoints WHERE workspace_id=?`).get(wsId)?.n||0; },
   countUserReqsToday(userId) {
     return db.prepare(
       `SELECT COUNT(*) as n FROM requests r
@@ -483,7 +474,6 @@ module.exports = {
     return db.prepare(`SELECT * FROM workspaces WHERE id=?`).get(wsId);
   },
   // Pending invites
-  getInviteById(id) { return db.prepare(`SELECT * FROM workspace_invites WHERE id=?`).get(id); },
   createInvite(wsId, githubLogin, invitedBy) {
     const id = require('crypto').randomBytes(5).toString('hex').toUpperCase();
     db.prepare(`INSERT OR REPLACE INTO workspace_invites (id,workspace_id,github_login,invited_by) VALUES (?,?,?,?)`).run(id, wsId, githubLogin.toLowerCase(), invitedBy);
