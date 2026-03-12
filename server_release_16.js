@@ -179,16 +179,15 @@ function checkMemberLimit(workspaceId) {
   if (!owner) return null;
   const limits = getPlanLimits(owner.plan);
   if (limits.memberLimit === Infinity) return null;
-  // Count non-owner members only — owner doesn't consume a seat
-  const allMembers = db.getWorkspaceMembers(workspaceId);
-  const nonOwnerCount = allMembers.filter(function(m) { return m.id !== ws.owner_id; }).length;
-  if (nonOwnerCount >= limits.memberLimit) {
+  // Count current members (excluding owner who doesn't consume a seat)
+  const memberCount = db.getWorkspaceMembers(workspaceId).length;
+  if (memberCount >= limits.memberLimit) {
     const planLabel = limits.label || owner.plan;
     return {
       error: 'member_limit',
       plan: owner.plan,
       limit: limits.memberLimit,
-      count: nonOwnerCount,
+      count: memberCount,
       message: `Limite de ${limits.memberLimit} membro(s) atingido no plano ${planLabel}. Faça upgrade para adicionar mais membros.`
     };
   }
@@ -4310,7 +4309,7 @@ async function loadEndpointsForWorkspace(wsId) {
     eps.forEach(function(ep) { state.endpoints[ep.id] = ep; state.requests[ep.id] = []; state.rules[ep.id] = []; });
     renderEndpointList();
     if (eps.length > 0) selectEndpoint(eps[0].id);
-    else { state.selectedEp = null; document.getElementById('main-view').style.display = 'none'; document.getElementById('main-empty').style.display = 'flex'; }
+    else { state.selectedEp = null; document.getElementById('main-content').style.display = 'none'; document.getElementById('empty-state').style.display = 'flex'; }
   }
 }
 
@@ -4385,25 +4384,21 @@ async function openManage(wsId) {
   document.getElementById('ws-invite-box').style.display = isOwner ? 'block' : 'none';
   document.getElementById('ws-delete-box').style.display = (isOwner && !isPersonal) ? 'block' : 'none';
 
-  // Members — declare early so seat status can use it
-  const members = data.members || [];
-  document.getElementById('ws-member-count').textContent = '(' + members.length + ')';
-
   // Seat status
   if (isOwner && data.memberLimit !== undefined) {
     const seatEl = document.getElementById('ws-seat-status');
     if (seatEl) {
-      // Count non-owner members only (owner doesn't consume a seat)
-      const nonOwnerCount = members.filter(function(m) { return m.role !== 'owner'; }).length;
+      const used = members.length;
       const limit = data.memberLimit;
-      const atLimit = limit !== null && nonOwnerCount >= limit;
+      const atLimit = limit !== null && used >= limit;
       if (limit === null || limit >= 999999) {
-        seatEl.textContent = nonOwnerCount + ' membro(s) · ilimitado';
+        seatEl.textContent = used + ' membro(s) · ilimitado';
         seatEl.style.color = 'var(--text3)';
       } else {
-        seatEl.innerHTML = nonOwnerCount + ' / ' + limit + ' membros inclusos no plano'
+        seatEl.innerHTML = used + ' / ' + limit + ' membros inclusos no plano'
           + (atLimit ? ' · <a href="/upgrade" style="color:var(--green);text-decoration:none;font-weight:600">Fazer upgrade ↗</a>' : '');
         seatEl.style.color = atLimit ? '#FFB347' : 'var(--text3)';
+        // Disable invite button if at limit
         const inviteBtn = document.getElementById('ws-invite-btn');
         if (inviteBtn) {
           inviteBtn.disabled = atLimit;
@@ -4413,6 +4408,10 @@ async function openManage(wsId) {
       }
     }
   }
+
+  // Members
+  const members = data.members || [];
+  document.getElementById('ws-member-count').textContent = '(' + members.length + ')';
 
   if (members.length === 0) {
     document.getElementById('ws-members-list').innerHTML = '<div style="color:var(--text3);font-size:12px;padding:4px 0">Nenhum membro.</div>';
