@@ -5214,33 +5214,33 @@ function renderCrudTables() {
           </div>
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
-          ${isViewer() ? '' : `<button onclick="editCrudTable('${esc(t.key)}')"
+          \${isViewer() ? '' : \`<button onclick="editCrudTable('\${esc(t.key)}')"
             style="background:#161616;border:1px solid #2a2a2a;border-radius:7px;padding:6px 12px;color:#888;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .2s"
             onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             Editar
-          </button>`}
-          <button onclick="toggleCurlPanel(${idx})"
+          </button>\`}
+          <button onclick="toggleCurlPanel(\${idx})"
             style="background:#161616;border:1px solid #2a2a2a;border-radius:7px;padding:6px 12px;color:#888;font-size:11px;cursor:pointer;font-family:'Space Mono',monospace;display:flex;align-items:center;gap:5px;transition:all .2s"
             onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             cURL
           </button>
-          ${isViewer() ? '' : `<button onclick="showFakerModal('${esc(t.key)}')"
+          \${isViewer() ? '' : \`<button onclick="showFakerModal('\${esc(t.key)}')"
             style="background:#00FF8712;border:1px solid #00FF8733;border-radius:7px;padding:6px 12px;color:var(--green);font-size:11px;cursor:pointer;font-weight:700;transition:all .2s"
             onmouseover="this.style.background='#00FF8720'" onmouseout="this.style.background='#00FF8712'" title="Gerar dados fake">
             ✦ Faker
-          </button>`}
-          <button onclick="openCrudData('${esc(t.key)}')"
+          </button>\`}
+          <button onclick="openCrudData('\${esc(t.key)}')"
             style="background:#161616;border:1px solid #2a2a2a;border-radius:7px;padding:6px 12px;color:#888;font-size:12px;cursor:pointer;transition:all .2s"
             onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">
             Ver Dados
           </button>
-          ${isViewer() ? '' : `<button onclick="deleteCrudTable('${esc(t.key)}')"
+          \${isViewer() ? '' : \`<button onclick="deleteCrudTable('\${esc(t.key)}')"
             style="background:none;border:none;color:#333;cursor:pointer;padding:6px;transition:color .2s"
             onmouseover="this.style.color='#FF4444'" onmouseout="this.style.color='#333'">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-          </button>`}
+          </button>\`}
         </div>
       </div>
       <div id="curl-panel-\${idx}" style="display:none;background:#060606;border:1px solid #1a1a1a;border-radius:8px;padding:12px 14px;margin-bottom:10px">
