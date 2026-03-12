@@ -1195,8 +1195,6 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
     }
     if (method === 'DELETE') {
       db.removeWorkspaceMember(wsId, targetUid);
-      // Notify all clients — the removed user will detect it and reset their view
-      broadcast(null, 'workspace_member_removed', { workspaceId: wsId, userId: targetUid });
       return json(res, { ok: true });
     }
   }
@@ -3900,7 +3898,7 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 <div id="crud-modal" style="display:none" class="modal-overlay">
   <div class="modal" style="width:540px">
     <div class="modal-row">
-      <h2 class="modal-title" id="crud-modal-title" style="margin:0">Nova Tabela CRUD</h2>
+      <h2 class="modal-title" style="margin:0">Nova Tabela CRUD</h2>
       <button onclick="hideCrudModal()" style="background:none;border:none;color:var(--text3)">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
@@ -3923,7 +3921,7 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
     </div>
     <div class="btn-row">
       <button class="btn-cancel" onclick="hideCrudModal()">Cancelar</button>
-      <button class="btn-primary" id="crud-modal-save-btn" onclick="createCrudTable()">Criar Tabela</button>
+      <button class="btn-primary" onclick="createCrudTable()">Criar Tabela</button>
     </div>
   </div>
 </div>
@@ -3985,7 +3983,6 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 <script>
 // ── STATE ────────────────────────────────────────────────────────────────────
 const baseUrl = '${baseUrl}';  // injected by server — works on localhost and production
-window.__currentUserId = '${currentUser ? currentUser.id : ''}';  // for WS membership checks
 const state = {
   endpoints: {},
   requests: {},      // endpointId -> []
@@ -4139,19 +4136,6 @@ function handleWsEvent(msg) {
     case 'crud_table_updated':
       state.crudTables[payload.key] = { ...payload };
       if (state.selectedEp) renderCrudTables();
-      break;
-    case 'workspace_member_removed':
-      // If this client's user was removed, fall back to personal workspace
-      if (payload.workspaceId === wsState.currentWsId && window.__currentUserId && payload.userId === window.__currentUserId) {
-        toast('Você foi removido deste workspace.', 'info');
-        const personal = wsState.workspaces.find(function(w) { return w.role === 'owner' && w.name.includes('(pessoal)'); });
-        if (personal) {
-          switchWorkspace(personal.id);
-        } else {
-          // Reload page to force clean state
-          location.reload();
-        }
-      }
       break;
   }
 }
@@ -5057,16 +5041,16 @@ function showCrudModal() {
   document.getElementById('crud-idfield').value = 'id';
   document.getElementById('crud-path-preview').textContent = '...';
   document.getElementById('crud-routes-preview').innerHTML = '';
-  document.getElementById('crud-modal-title').textContent = 'Nova Tabela CRUD';
-  document.getElementById('crud-modal-save-btn').textContent = 'Criar Tabela';
+  const title = document.querySelector('#crud-modal .modal-title');
+  if (title) title.textContent = 'Nova Tabela CRUD';
   document.getElementById('crud-modal').style.display = 'flex';
-  setTimeout(function() { document.getElementById('crud-path').focus(); }, 50);
+  setTimeout(() => document.getElementById('crud-path').focus(), 50);
 }
 function hideCrudModal() {
   document.getElementById('crud-modal').style.display = 'none';
   state._editingCrudKey = null;
-  document.getElementById('crud-modal-title').textContent = 'Nova Tabela CRUD';
-  document.getElementById('crud-modal-save-btn').textContent = 'Criar Tabela';
+  const title = document.querySelector('#crud-modal .modal-title');
+  if (title) title.textContent = 'Nova Tabela CRUD';
 }
 
 document.addEventListener('input', e => {
@@ -5164,15 +5148,14 @@ function toggleCurlPanel(idx) {
 
 function editCrudTable(key) {
   const tbl = state.crudTables[key];
-  if (!tbl) { toast('Tabela não encontrada no estado local. Recarregue a aba CRUD.', 'error'); return; }
+  if (!tbl) return;
   document.getElementById('crud-path').value = tbl.path;
   document.getElementById('crud-idfield').value = tbl.idField || 'id';
   state._editingCrudKey = key;
-  document.getElementById('crud-modal-title').textContent = 'Editar Tabela CRUD';
-  document.getElementById('crud-modal-save-btn').textContent = 'Salvar Alterações';
+  const title = document.querySelector('#crud-modal .modal-title');
+  if (title) title.textContent = 'Editar Tabela CRUD';
   updateCrudPreview();
   document.getElementById('crud-modal').style.display = 'flex';
-  setTimeout(function() { document.getElementById('crud-path').focus(); }, 50);
 }
 
 function renderCrudTables() {
