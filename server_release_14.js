@@ -3265,20 +3265,8 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 .revoke-btn:hover{color:#ff4444;border-color:#ff444433}
 .ws-manage-btn{background:none;border:1px solid var(--border);color:var(--text3);border-radius:4px;padding:4px 8px;font-size:11px;cursor:pointer;transition:all .2s}
 .ws-manage-btn:hover{color:var(--text);border-color:var(--text3)}
-.ws-remove-btn{background:none;border:none;color:#444;cursor:pointer;font-size:18px;line-height:1;padding:0 4px;flex-shrink:0;transition:color .15s}
+.ws-remove-btn{background:none;border:none;color:#555;cursor:pointer;font-size:18px;line-height:1;padding:0 4px;flex-shrink:0;transition:color .15s}
 .ws-remove-btn:hover{color:#FF4D6D}
-.ws-sidebar-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:6px;cursor:pointer;margin-bottom:2px;border:1px solid transparent;transition:all .15s}
-.ws-sidebar-item:hover{background:var(--bg2)}
-.ws-sidebar-item.active{background:var(--bg2);border-color:var(--green)}
-.ws-member-row{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg3);border-radius:7px;border:1px solid var(--border)}
-.btn-sm-green{background:var(--green-dim);border:1px solid var(--green-border);border-radius:6px;padding:4px 10px;color:var(--green);font-size:11px;font-weight:600;cursor:pointer;transition:all .2s}
-.btn-sm-green:hover{background:#00FF8733}
-.section-label{font-size:10px;color:var(--text3);letter-spacing:.08em;text-transform:uppercase;font-weight:600}
-.ws-error-box{background:#FF4D6D15;border:1px solid #FF4D6D44;border-radius:6px;padding:8px 12px;font-size:12px;color:#FF4D6D}
-.ws-delete-btn{background:none;border:1px solid #333;border-radius:6px;padding:7px 12px;color:#555;font-size:11px;cursor:pointer;font-weight:600;transition:all .2s}
-.ws-delete-btn:hover{color:#FF4D6D;border-color:#FF4D6D55}
-.icon-btn{background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:2px 6px;border-radius:4px;line-height:1;transition:color .15s}
-.icon-btn:hover{color:var(--text)}
 .modal-title{font-size:18px;font-weight:700;color:#fff;margin-bottom:24px}
 .modal-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
 .form-group{margin-bottom:18px}
@@ -3586,86 +3574,80 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 
 <!-- WORKSPACE MODAL -->
 <div id="workspace-modal" class="modal-overlay" style="display:none">
-  <div class="modal" style="width:660px;height:500px;padding:0;overflow:hidden;display:flex;flex-direction:column">
-
-    <!-- Header -->
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);flex-shrink:0">
-      <span style="font-size:14px;font-weight:700;color:var(--text)">Workspaces</span>
-      <button id="ws-close-btn" class="icon-btn">✕</button>
+  <div class="modal" style="width:580px;max-height:88vh;display:flex;flex-direction:column">
+    <div class="modal-row" style="flex-shrink:0">
+      <h2 class="modal-title" style="margin:0">🏢 Workspaces</h2>
+      <button onclick="closeWorkspaceModal()" style="background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer;line-height:1">✕</button>
     </div>
 
-    <!-- Body: sidebar + panel -->
-    <div style="display:flex;flex:1;min-height:0;overflow:hidden">
+    <!-- Two column layout -->
+    <div style="display:flex;gap:0;flex:1;min-height:0;overflow:hidden;border:1px solid var(--border);border-radius:8px">
 
-      <!-- LEFT sidebar -->
-      <div style="width:210px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;background:var(--bg3)">
-        <div id="ws-sidebar-list" style="flex:1;overflow-y:auto;padding:8px"></div>
+      <!-- LEFT: workspace list -->
+      <div style="width:200px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;background:var(--bg3)">
+        <div style="padding:10px 12px;font-size:10px;letter-spacing:.08em;color:var(--text3);text-transform:uppercase;border-bottom:1px solid var(--border)">Meus Workspaces</div>
+        <div id="ws-sidebar-list" style="flex:1;overflow-y:auto;padding:6px"></div>
         <div style="padding:8px;border-top:1px solid var(--border)">
-          <input id="ws-new-name" class="form-input" placeholder="Novo workspace..." style="font-size:11px;padding:6px 8px;margin-bottom:6px"/>
-          <button id="ws-create-btn" class="btn-primary" style="width:100%;font-size:12px;padding:7px 0">+ Criar</button>
+          <div style="display:flex;gap:6px">
+            <input id="ws-new-name" class="form-input" placeholder="Novo workspace..." style="flex:1;font-size:11px;padding:6px 8px"/>
+            <button onclick="createWorkspace()" class="btn-primary" style="width:auto;padding:0 10px;font-size:18px;flex-shrink:0" title="Criar">+</button>
+          </div>
         </div>
       </div>
 
-      <!-- RIGHT panel -->
-      <div style="flex:1;overflow-y:auto;display:flex;flex-direction:column">
-
-        <!-- placeholder -->
-        <div id="ws-panel-empty" style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px">
-          <div style="font-size:36px;opacity:.3">🏢</div>
-          <div style="font-size:12px;color:var(--text3)">Selecione um workspace ao lado</div>
+      <!-- RIGHT: manage panel -->
+      <div style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px">
+        <!-- placeholder when nothing selected -->
+        <div id="ws-manage-placeholder" style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:var(--text3)">
+          <div style="font-size:32px">👈</div>
+          <div style="font-size:12px">Selecione um workspace</div>
         </div>
 
-        <!-- panel content -->
-        <div id="ws-panel" style="display:none;flex-direction:column;flex:1">
+        <!-- manage content (hidden until ws selected) -->
+        <div id="ws-manage-content" style="display:none;flex-direction:column;gap:14px">
 
-          <!-- ws header -->
-          <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
-            <span id="ws-panel-icon" style="font-size:22px">🏢</span>
+          <!-- Header -->
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg3);border-radius:8px">
+            <span id="ws-manage-icon" style="font-size:22px">🏢</span>
             <div style="flex:1">
-              <div id="ws-panel-name" style="font-size:14px;font-weight:700;color:var(--text)"></div>
-              <div id="ws-panel-meta" style="font-size:11px;color:var(--text3);margin-top:2px"></div>
+              <div id="ws-manage-name" style="font-size:14px;font-weight:700;color:var(--text)"></div>
+              <div id="ws-manage-role-badge" style="font-size:11px;color:var(--text3);margin-top:1px"></div>
             </div>
-            <span id="ws-panel-active" style="display:none;font-size:10px;color:var(--green);font-weight:700;letter-spacing:.06em;border:1px solid #00FF8744;border-radius:4px;padding:2px 8px">ATIVO</span>
-            <button id="ws-switch-btn" class="btn-sm-green" style="display:none">Ativar</button>
+            <span id="ws-active-badge" style="display:none;font-size:10px;color:var(--green);font-weight:700;letter-spacing:.06em;border:1px solid var(--green);border-radius:4px;padding:2px 6px">ATIVO</span>
           </div>
 
-          <!-- scrollable content -->
-          <div style="flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:16px">
-
-            <!-- invite -->
-            <div id="ws-invite-box">
-              <div class="section-label">Convidar membro</div>
-              <div style="display:flex;gap:6px;margin-top:6px">
-                <input id="ws-invite-login" class="form-input" placeholder="GitHub username" style="flex:1"/>
-                <select id="ws-invite-role" class="form-input" style="width:88px;flex-shrink:0">
-                  <option value="editor">Editor</option>
-                  <option value="viewer">Viewer</option>
-                </select>
-                <button id="ws-invite-btn" class="btn-primary" style="width:auto;padding:0 14px;flex-shrink:0;font-size:12px">Convidar</button>
-              </div>
-              <div style="font-size:10px;color:var(--text3);margin-top:5px">Editor: cria/edita endpoints &nbsp;·&nbsp; Viewer: só leitura</div>
+          <!-- Invite section (owner only) -->
+          <div id="ws-invite-section">
+            <div style="font-size:11px;color:var(--text3);margin-bottom:7px;letter-spacing:.06em;text-transform:uppercase">Convidar por username do GitHub</div>
+            <div style="display:flex;gap:6px">
+              <input id="ws-invite-login" class="form-input" placeholder="ex: anderson-cavalcanti" style="flex:1"/>
+              <select id="ws-invite-role" class="form-input" style="width:90px;flex-shrink:0">
+                <option value="editor">Editor</option>
+                <option value="viewer">Viewer</option>
+              </select>
+              <button onclick="inviteMember()" class="btn-primary" style="width:auto;padding:0 14px;flex-shrink:0;font-size:12px">Convidar</button>
             </div>
+            <div style="font-size:11px;color:var(--text3);margin-top:5px">Editor: cria/edita &nbsp;·&nbsp; Viewer: só leitura</div>
+          </div>
 
-            <!-- members -->
-            <div>
-              <div class="section-label">Membros <span id="ws-member-count" style="color:var(--text2);font-weight:400;text-transform:none;letter-spacing:0"></span></div>
-              <div id="ws-members-list" style="margin-top:6px;display:flex;flex-direction:column;gap:4px"></div>
-            </div>
+          <!-- Members -->
+          <div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:7px;letter-spacing:.06em;text-transform:uppercase">Membros <span id="ws-member-count" style="color:var(--text2)"></span></div>
+            <div id="ws-members-list" style="display:flex;flex-direction:column;gap:5px"></div>
+          </div>
 
-            <!-- pending -->
-            <div id="ws-pending-box" style="display:none">
-              <div class="section-label">Convites pendentes</div>
-              <div id="ws-pending-list" style="margin-top:6px;display:flex;flex-direction:column;gap:4px"></div>
-            </div>
+          <!-- Pending invites -->
+          <div id="ws-pending-section" style="display:none">
+            <div style="font-size:11px;color:var(--text3);margin-bottom:7px;letter-spacing:.06em;text-transform:uppercase">Convites pendentes</div>
+            <div id="ws-pending-list" style="display:flex;flex-direction:column;gap:4px"></div>
+          </div>
 
-            <!-- error -->
-            <div id="ws-panel-error" class="ws-error-box" style="display:none"></div>
+          <!-- Error display -->
+          <div id="ws-manage-error" style="display:none;background:#FF4D6D15;border:1px solid #FF4D6D44;border-radius:6px;padding:8px 12px;font-size:12px;color:#FF4D6D"></div>
 
-            <!-- delete -->
-            <div id="ws-delete-box" style="display:none;margin-top:auto;padding-top:12px;border-top:1px solid #222">
-              <button id="ws-delete-btn" class="ws-delete-btn">🗑 Deletar workspace</button>
-            </div>
-
+          <!-- Danger zone (owner only, non-personal) -->
+          <div id="ws-danger-zone" style="display:none;padding-top:12px;border-top:1px solid #FF4D6D22">
+            <button onclick="deleteCurrentWorkspace()" style="background:#FF4D6D12;border:1px solid #FF4D6D33;border-radius:6px;padding:7px 12px;color:#FF4D6D88;font-size:11px;cursor:pointer;font-weight:600;transition:all .2s" onmouseover="this.style.color='#FF4D6D';this.style.borderColor='#FF4D6D66'" onmouseout="this.style.color='#FF4D6D88';this.style.borderColor='#FF4D6D33'">🗑 Deletar este workspace</button>
           </div>
         </div>
       </div>
@@ -4135,29 +4117,12 @@ async function deleteEndpoint(id, e) {
 // ── WORKSPACE MODAL ────────────────────────────────────────────────────────────
 const wsState = { workspaces: [], currentWsId: null, managingWsId: null };
 
-// Wire up static buttons once DOM is ready
-function wsBindStaticButtons() {
-  document.getElementById('ws-close-btn').addEventListener('click', closeWorkspaceModal);
-  document.getElementById('ws-create-btn').addEventListener('click', createWorkspace);
-  document.getElementById('ws-invite-btn').addEventListener('click', inviteMember);
-  document.getElementById('ws-switch-btn').addEventListener('click', function() {
-    if (wsState.managingWsId) switchWorkspace(wsState.managingWsId);
-  });
-  document.getElementById('ws-delete-btn').addEventListener('click', deleteCurrentWorkspace);
-  document.getElementById('ws-new-name').addEventListener('keydown', function(e) {
-    if (e.key === 'Enter') createWorkspace();
-  });
-  document.getElementById('ws-invite-login').addEventListener('keydown', function(e) {
-    if (e.key === 'Enter') inviteMember();
-  });
-}
-
 async function loadWorkspaces() {
   const list = await api('GET', '/api/workspaces');
   if (!list || list.error) return;
   wsState.workspaces = list;
   if (!wsState.currentWsId) {
-    const personal = list.find(function(w) { return w.role === 'owner' && w.name.includes('(pessoal)'); }) || list[0];
+    const personal = list.find(function(w){ return w.role === 'owner' && w.name.includes('(pessoal)'); }) || list[0];
     if (personal) wsState.currentWsId = personal.id;
   }
   updateWorkspaceSelector();
@@ -4165,9 +4130,10 @@ async function loadWorkspaces() {
 }
 
 function updateWorkspaceSelector() {
-  const ws = wsState.workspaces.find(function(w) { return w.id === wsState.currentWsId; });
+  const ws = wsState.workspaces.find(function(w){ return w.id === wsState.currentWsId; });
   if (!ws) return;
-  document.getElementById('ws-icon').textContent = ws.name.includes('(pessoal)') ? '👤' : '🏢';
+  const isPersonal = ws.name.includes('(pessoal)');
+  document.getElementById('ws-icon').textContent = isPersonal ? '👤' : '🏢';
   document.getElementById('ws-name').textContent = ws.name.replace(' (pessoal)', '');
 }
 
@@ -4182,20 +4148,23 @@ async function loadEndpointsForWorkspace(wsId) {
   const eps = await api('GET', '/api/workspaces/' + wsId + '/endpoints');
   if (eps && !eps.error) {
     state.endpoints = {};
-    eps.forEach(function(ep) { state.endpoints[ep.id] = ep; state.requests[ep.id] = []; state.rules[ep.id] = []; });
+    eps.forEach(function(ep){ state.endpoints[ep.id] = ep; state.requests[ep.id] = []; state.rules[ep.id] = []; });
     renderEndpointList();
     if (eps.length > 0) selectEndpoint(eps[0].id);
-    else { state.selectedEp = null; document.getElementById('main-content').style.display = 'none'; document.getElementById('empty-state').style.display = 'flex'; }
+    else { state.selectedEp = null; document.getElementById('main-content').style.display='none'; document.getElementById('empty-state').style.display='flex'; }
   }
 }
 
 function showWorkspaceModal() {
   document.getElementById('workspace-modal').style.display = 'flex';
   renderWsSidebar();
-  const toOpen = wsState.managingWsId || wsState.currentWsId;
-  if (toOpen) openManage(toOpen);
+  // Auto-select currently active workspace
+  if (wsState.managingWsId) {
+    openManage(wsState.managingWsId);
+  } else if (wsState.currentWsId) {
+    openManage(wsState.currentWsId);
+  }
 }
-
 function closeWorkspaceModal() {
   document.getElementById('workspace-modal').style.display = 'none';
 }
@@ -4203,172 +4172,134 @@ function closeWorkspaceModal() {
 function renderWsSidebar() {
   const el = document.getElementById('ws-sidebar-list');
   if (!el) return;
-  el.innerHTML = '';
-  wsState.workspaces.forEach(function(ws) {
+  if (!wsState.workspaces.length) {
+    el.innerHTML = '<div style="font-size:11px;color:var(--text3);padding:8px;text-align:center">Nenhum workspace</div>';
+    return;
+  }
+  el.innerHTML = wsState.workspaces.map(function(ws) {
     const isPersonal = ws.name.includes('(pessoal)');
-    const displayName = ws.name.replace(' (pessoal)', '');
-    const isActive = ws.id === wsState.currentWsId;
+    const isCurrent = ws.id === wsState.currentWsId;
     const isManaging = ws.id === wsState.managingWsId;
-
-    const item = document.createElement('div');
-    item.className = 'ws-sidebar-item' + (isManaging ? ' active' : '');
-    item.innerHTML = '<span style="font-size:16px;flex-shrink:0">' + (isPersonal ? '👤' : '🏢') + '</span>'
+    const displayName = ws.name.replace(' (pessoal)', '');
+    return '<div onclick="openManage(' + JSON.stringify(ws.id) + ')" style="display:flex;align-items:center;gap:7px;padding:7px 8px;border-radius:6px;cursor:pointer;margin-bottom:2px;background:' + (isManaging ? 'var(--bg2)' : 'transparent') + ';border:1px solid ' + (isManaging ? 'var(--green)' : 'transparent') + ';transition:all .2s">'
+      + '<span style="font-size:14px;flex-shrink:0">' + (isPersonal ? '👤' : '🏢') + '</span>'
       + '<div style="flex:1;min-width:0">'
       + '<div style="font-size:12px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(displayName) + '</div>'
-      + '<div style="font-size:10px;color:var(--text3)">' + (ws.ep_count || 0) + ' endpoint(s)</div>'
+      + '<div style="font-size:10px;color:var(--text3)">' + ws.ep_count + ' ep · ' + ws.role + '</div>'
       + '</div>'
-      + (isActive ? '<span style="font-size:8px;color:var(--green)">●</span>' : '');
-    item.addEventListener('click', function() { openManage(ws.id); });
-    el.appendChild(item);
-  });
+      + (isCurrent ? '<span style="font-size:9px;color:var(--green);font-weight:700">●</span>' : '')
+      + '</div>';
+  }).join('');
 }
 
 async function openManage(wsId) {
   wsState.managingWsId = wsId;
   renderWsSidebar();
-
-  // Show panel, hide empty state
-  document.getElementById('ws-panel-empty').style.display = 'none';
-  const panel = document.getElementById('ws-panel');
-  panel.style.display = 'flex';
-
+  // Show content, hide placeholder
+  document.getElementById('ws-manage-placeholder').style.display = 'none';
+  const content = document.getElementById('ws-manage-content');
+  content.style.display = 'flex';
   // Loading state
-  document.getElementById('ws-members-list').innerHTML = '<div style="color:var(--text3);font-size:12px;padding:4px 0">Carregando...</div>';
-  document.getElementById('ws-panel-error').style.display = 'none';
+  document.getElementById('ws-members-list').innerHTML = '<div style="color:var(--text3);font-size:12px;padding:8px">Carregando...</div>';
+  document.getElementById('ws-manage-error').style.display = 'none';
 
   const data = await api('GET', '/api/workspaces/' + wsId);
-
   if (!data || data.error) {
-    document.getElementById('ws-panel-error').textContent = 'Erro ao carregar: ' + ((data && data.error) || 'falha na requisição');
-    document.getElementById('ws-panel-error').style.display = 'block';
+    document.getElementById('ws-manage-error').style.display = 'block';
+    document.getElementById('ws-manage-error').textContent = 'Erro: ' + (data && data.error ? data.error : 'Não foi possível carregar o workspace.');
     document.getElementById('ws-members-list').innerHTML = '';
     return;
   }
 
   const isPersonal = (data.name || '').includes('(pessoal)');
   const isCurrent = wsId === wsState.currentWsId;
-  const isOwner = data.yourRole === 'owner';
 
-  // Header
-  document.getElementById('ws-panel-icon').textContent = isPersonal ? '👤' : '🏢';
-  document.getElementById('ws-panel-name').textContent = (data.name || '').replace(' (pessoal)', '');
-  document.getElementById('ws-panel-meta').textContent = 'Sua role: ' + (data.yourRole || '?') + ' · ' + (data.ep_count || 0) + ' endpoint(s)';
-  document.getElementById('ws-panel-active').style.display = isCurrent ? 'inline' : 'none';
-  document.getElementById('ws-switch-btn').style.display = (!isCurrent) ? 'inline-block' : 'none';
+  document.getElementById('ws-manage-icon').textContent = isPersonal ? '👤' : '🏢';
+  document.getElementById('ws-manage-name').textContent = (data.name || '').replace(' (pessoal)', '');
+  document.getElementById('ws-manage-role-badge').textContent = 'Sua role: ' + (data.yourRole || '?');
+  const activeBadge = document.getElementById('ws-active-badge');
+  activeBadge.style.display = isCurrent ? 'inline' : 'none';
 
-  // Sections visibility
-  document.getElementById('ws-invite-box').style.display = isOwner ? 'block' : 'none';
-  document.getElementById('ws-delete-box').style.display = (isOwner && !isPersonal) ? 'block' : 'none';
+  // Switch workspace button
+  const switchBtn = document.getElementById('ws-switch-btn');
+  if (switchBtn) switchBtn.style.display = isCurrent ? 'none' : 'inline-block';
+
+  // Invite section
+  document.getElementById('ws-invite-section').style.display = data.yourRole === 'owner' ? 'block' : 'none';
+  // Danger zone
+  document.getElementById('ws-danger-zone').style.display = (data.yourRole === 'owner' && !isPersonal) ? 'block' : 'none';
 
   // Members
   const members = data.members || [];
   document.getElementById('ws-member-count').textContent = '(' + members.length + ')';
-
   if (members.length === 0) {
-    document.getElementById('ws-members-list').innerHTML = '<div style="color:var(--text3);font-size:12px;padding:4px 0">Nenhum membro.</div>';
+    document.getElementById('ws-members-list').innerHTML = '<div style="color:var(--text3);font-size:12px;padding:8px">Nenhum membro encontrado.</div>';
   } else {
-    const list = document.getElementById('ws-members-list');
-    list.innerHTML = '';
-    members.forEach(function(m) {
-      const canEdit = isOwner && m.role !== 'owner';
-
-      const row = document.createElement('div');
-      row.className = 'ws-member-row';
-
-      // Avatar
-      const avatarEl = document.createElement('div');
-      avatarEl.style.cssText = 'width:28px;height:28px;border-radius:50%;overflow:hidden;flex-shrink:0;background:var(--border2);display:flex;align-items:center;justify-content:center;font-size:11px';
-      if (m.avatar) {
-        const img = document.createElement('img');
-        img.src = m.avatar;
-        img.width = 28; img.height = 28;
-        img.style.borderRadius = '50%';
-        avatarEl.appendChild(img);
-      } else {
-        avatarEl.textContent = '👤';
-      }
-
-      // Info
-      const info = document.createElement('div');
-      info.style.cssText = 'flex:1;min-width:0';
-      info.innerHTML = '<div style="font-size:12px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">@' + esc(m.login) + '</div>'
-        + (m.name ? '<div style="font-size:10px;color:var(--text3)">' + esc(m.name) + '</div>' : '');
-
-      // Role select
-      const sel = document.createElement('select');
-      sel.style.cssText = 'background:var(--bg2);border:1px solid var(--border2);border-radius:4px;color:var(--text);font-size:11px;padding:3px 6px;cursor:pointer';
-      sel.disabled = !canEdit;
-      ['owner','editor','viewer'].forEach(function(r) {
-        const opt = document.createElement('option');
-        opt.value = r; opt.textContent = r.charAt(0).toUpperCase() + r.slice(1);
-        if (m.role === r) opt.selected = true;
-        sel.appendChild(opt);
-      });
-      sel.addEventListener('change', function() { changeMemberRole(wsId, m.id, sel.value); });
-
-      row.appendChild(avatarEl);
-      row.appendChild(info);
-      row.appendChild(sel);
-
-      if (canEdit) {
-        const btn = document.createElement('button');
-        btn.className = 'ws-remove-btn';
-        btn.title = 'Remover membro';
-        btn.textContent = '×';
-        btn.addEventListener('click', function() { removeMember(wsId, m.id); });
-        row.appendChild(btn);
-      }
-
-      list.appendChild(row);
-    });
+    document.getElementById('ws-members-list').innerHTML = members.map(function(m) {
+      const isOwner = m.role === 'owner';
+      const canEdit = data.yourRole === 'owner' && !isOwner;
+      const avatar = m.avatar
+        ? '<img src="' + esc(m.avatar) + '" width="26" height="26" style="border-radius:50%;flex-shrink:0">'
+        : '<span style="width:26px;height:26px;border-radius:50%;background:var(--border2);display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0">👤</span>';
+      return '<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bg3);border-radius:7px">'
+        + avatar
+        + '<div style="flex:1;min-width:0">'
+        + '<div style="font-size:12px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">@' + esc(m.login) + '</div>'
+        + (m.name ? '<div style="font-size:10px;color:var(--text3)">' + esc(m.name) + '</div>' : '')
+        + '</div>'
+        + '<select onchange="changeMemberRole(' + JSON.stringify(wsId) + ',' + JSON.stringify(m.id) + ',this.value)" style="background:var(--bg2);border:1px solid var(--border2);border-radius:4px;color:var(--text);font-size:11px;padding:3px 6px" ' + (!canEdit ? 'disabled' : '') + '>'
+        + '<option value="owner"' + (m.role==='owner'?' selected':'') + '>Owner</option>'
+        + '<option value="editor"' + (m.role==='editor'?' selected':'') + '>Editor</option>'
+        + '<option value="viewer"' + (m.role==='viewer'?' selected':'') + '>Viewer</option>'
+        + '</select>'
+        + (canEdit ? '<button onclick="removeMember(' + JSON.stringify(wsId) + ',' + JSON.stringify(m.id) + ')" title="Remover membro" class="ws-remove-btn">×</button>' : '<span style="width:22px"></span>')
+        + '</div>';
+    }).join('');
   }
 
   // Pending invites
   const pending = data.pending || [];
-  const pendingBox = document.getElementById('ws-pending-box');
   if (pending.length > 0) {
-    pendingBox.style.display = 'block';
+    document.getElementById('ws-pending-section').style.display = 'block';
     document.getElementById('ws-pending-list').innerHTML = pending.map(function(p) {
       return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg3);border-radius:6px;font-size:12px">'
-        + '<span style="color:var(--text3);font-size:14px">⏳</span>'
-        + '<span style="flex:1;color:var(--text2)">@' + esc(p.github_login) + '</span>'
+        + '<span style="color:var(--text3)">⏳</span><span style="flex:1;color:var(--text2)">@' + esc(p.github_login) + '</span>'
         + '<span style="font-size:10px;color:var(--text3);letter-spacing:.06em">PENDENTE</span></div>';
     }).join('');
   } else {
-    pendingBox.style.display = 'none';
+    document.getElementById('ws-pending-section').style.display = 'none';
   }
 }
 
 async function createWorkspace() {
-  const name = (document.getElementById('ws-new-name').value || '').trim();
-  if (!name) return toast('Digite um nome para o workspace.', 'error');
+  const name = document.getElementById('ws-new-name').value.trim();
+  if (!name) return toast('Digite um nome.', 'error');
   const result = await api('POST', '/api/workspaces', { name });
   if (!result || result.error) return toast((result && result.error) || 'Erro ao criar.', 'error');
   document.getElementById('ws-new-name').value = '';
   await loadWorkspaces();
   renderWsSidebar();
-  openManage(result.id);
-  toast('Workspace "' + esc(name) + '" criado!', 'success');
+  toast('Workspace "' + name + '" criado!', 'success');
 }
 
 async function inviteMember() {
-  const wsId = wsState.managingWsId;
-  if (!wsId) return toast('Selecione um workspace.', 'error');
+  const wsId = wsState.managingWsId || wsState.currentWsId;
+  if (!wsId) return toast('Selecione um workspace primeiro.', 'error');
   const login = (document.getElementById('ws-invite-login').value || '').trim();
   const role = document.getElementById('ws-invite-role').value;
   if (!login) return toast('Digite o GitHub username.', 'error');
   const result = await api('POST', '/api/workspaces/' + wsId + '/invite', { github_login: login, role });
   if (!result || result.error) return toast((result && result.error) || 'Erro ao convidar.', 'error');
   document.getElementById('ws-invite-login').value = '';
-  toast(result.added ? '@' + login + ' adicionado!' : (result.message || 'Convite pendente para @' + login + '!'), 'success');
+  toast(result.added ? '@' + login + ' adicionado!' : (result.message || 'Convite pendente para @' + login), 'success');
   openManage(wsId);
 }
 
 async function changeMemberRole(wsId, userId, role) {
   if (role === 'owner') return;
   const result = await api('PATCH', '/api/workspaces/' + wsId + '/members/' + userId, { role });
-  if (result && result.error) toast(result.error, 'error');
-  else toast('Role atualizado.', 'success');
+  if (result && result.error) return toast(result.error, 'error');
+  toast('Role atualizado.', 'success');
 }
 
 async function removeMember(wsId, userId) {
@@ -4385,8 +4316,8 @@ async function deleteCurrentWorkspace() {
   if (!confirm('Deletar este workspace? Todos os endpoints serão perdidos. Irreversível.')) return;
   const result = await api('DELETE', '/api/workspaces/' + wsId);
   if (!result || result.error) return toast((result && result.error) || 'Erro ao deletar.', 'error');
-  if (wsState.currentWsId === wsId) wsState.currentWsId = null;
   wsState.managingWsId = null;
+  if (wsState.currentWsId === wsId) wsState.currentWsId = null;
   closeWorkspaceModal();
   await loadWorkspaces();
   toast('Workspace deletado.', 'info');
@@ -5521,8 +5452,7 @@ async function init() {
   connectWS();
   updatePlanUsage();
   // Load workspaces (non-blocking)
-  wsBindStaticButtons();
-  loadWorkspaces().catch(function() {});
+  loadWorkspaces().catch(() => {});
 }
 
 init();
