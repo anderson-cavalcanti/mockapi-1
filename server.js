@@ -631,6 +631,17 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
       const expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
       db.createSession(token, user.id, expires);
 
+      // Auto-accept any pending workspace invites for this GitHub login
+      const pendingInvites = db.getPendingInvitesByLogin(user.login);
+      for (const invite of pendingInvites) {
+        db.addWorkspaceMember(invite.workspace_id, user.id, 'editor', invite.invited_by);
+        db.deleteInvite(invite.id);
+        console.log('[workspace] auto-accepted invite for', user.login, '→', invite.workspace_id);
+      }
+
+      // Ensure personal workspace exists
+      db.ensurePersonalWorkspace(user.id, user.login);
+
       res.writeHead(302, {
         Location: '/',
         'Set-Cookie': `mockapi_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30*24*3600}`
@@ -772,6 +783,14 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
   // ── ENDPOINTS (with auth filter)
   if (method === 'GET' && pathname === '/api/endpoints') {
     const user = getSessionUser(req) || getTokenUser(req);
+    const urlObj = new URL(req.url, 'http://x');
+    const wsId = urlObj.searchParams.get('workspace');
+    if (wsId && user) {
+      // Verify membership
+      const membership = db.getWorkspaceMember(wsId, user.id);
+      if (!membership && !user?.isAdmin) return json(res, { error: 'Forbidden' }, 403);
+      return json(res, db.getAllEndpoints(user.id, wsId));
+    }
     return json(res, db.getAllEndpoints(user ? user.id : null));
   }
   if (method === 'POST' && pathname === '/api/endpoints') {
@@ -4553,6 +4572,10 @@ function renderEndpointList() {
 async function selectEndpoint(id) {
   state.selectedEp = id;
   state.selectedReq = null;
+  // Clear stale CRUD tables from previous endpoint
+  Object.keys(state.crudTables).forEach(function(k) {
+    if (!k.startsWith(id + ':')) delete state.crudTables[k];
+  });
   renderEndpointList();
 
   // Load requests and rules if not loaded
@@ -4564,17 +4587,22 @@ async function selectEndpoint(id) {
     const rules = await api('GET', '/api/rules/' + id);
     state.rules[id] = rules;
   }
-  // Load CRUD tables
+  // Load CRUD tables fresh every time endpoint changes
   const tables = await api('GET', '/api/crud/' + id);
-  tables.forEach(t => { state.crudTables[t.key] = t; });
+  if (Array.isArray(tables)) tables.forEach(function(t) { state.crudTables[t.key] = t; });
 
   showEndpointView();
   updateHeader();
   renderFeed();
   renderRules();
+  // If CRUD tab is active, refresh it too
+  if (state.currentTab === 'crud') renderCrudTables();
+  else {
+    const tabLabel = document.getElementById('crud-tab-label');
+    if (tabLabel) tabLabel.textContent = 'CRUD (' + (Array.isArray(tables) ? tables.length : 0) + ')';
+  }
 
   // Show URL tester
-  const ep = state.endpoints[id];
   document.getElementById('url-tester').style.display = 'block';
   document.getElementById('tester-base').textContent = '${baseUrl}/mock/' + id;
   document.getElementById('tester-path').value = '';
@@ -5504,10 +5532,27 @@ function createVersionedRule(fromPath, version) {
 
 
 async function init() {
-  // Enable buttons immediately - don't wait for WS
+  wsBindStaticButtons();
+  connectWS();
+  updatePlanUsage();
+
   try {
-    const eps = await api('GET', '/api/endpoints');
-    eps.forEach(ep => {
+    // Load workspaces first to know which is active
+    const wsList = await api('GET', '/api/workspaces');
+    if (wsList && !wsList.error && wsList.length > 0) {
+      wsState.workspaces = wsList;
+      const personal = wsList.find(function(w) { return w.role === 'owner' && w.name.includes('(pessoal)'); }) || wsList[0];
+      if (personal) wsState.currentWsId = personal.id;
+      updateWorkspaceSelector();
+      document.getElementById('workspace-selector').style.display = 'block';
+    }
+
+    // Load endpoints for active workspace (or all if no workspace)
+    const url = wsState.currentWsId ? '/api/endpoints?workspace=' + wsState.currentWsId : '/api/endpoints';
+    const eps = await api('GET', url);
+    if (!Array.isArray(eps)) throw new Error('invalid endpoints response');
+    state.endpoints = {};
+    eps.forEach(function(ep) {
       state.endpoints[ep.id] = ep;
       state.requests[ep.id] = [];
       state.rules[ep.id] = [];
@@ -5516,13 +5561,7 @@ async function init() {
   } catch(e) {
     console.warn('Could not load endpoints, retrying...', e);
     setTimeout(init, 2000);
-    return;
   }
-  connectWS();
-  updatePlanUsage();
-  // Load workspaces (non-blocking)
-  wsBindStaticButtons();
-  loadWorkspaces().catch(function() {});
 }
 
 init();
