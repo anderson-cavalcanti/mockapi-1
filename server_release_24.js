@@ -1280,19 +1280,6 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
     }
   }
 
-  // PATCH /api/workspaces/:id/visible  → toggle menu visibility for current user
-  const wsVisibleMatch = pathname.match(/^\/api\/workspaces\/([A-Z0-9]+)\/visible$/);
-  if (method === 'PATCH' && wsVisibleMatch) {
-    const user = requireAuth(req, res); if (!user) return;
-    const wsId = wsVisibleMatch[1];
-    const membership = db.getWorkspaceMember(wsId, user.id);
-    if (!membership) return json(res, { error: 'Not a member' }, 403);
-    const body = await readBody(req); let data = {}; try { data = JSON.parse(body); } catch(_) {}
-    const visible = data.visible !== false && data.visible !== 0;
-    db.setWorkspaceVisible(wsId, user.id, visible);
-    return json(res, { ok: true, visible });
-  }
-
   // GET /api/workspaces/:id/endpoints  → endpoints in this workspace
   const wsEpMatch = pathname.match(/^\/api\/workspaces\/([A-Z0-9]+)\/endpoints$/);
   if (method === 'GET' && wsEpMatch) {
@@ -4671,23 +4658,17 @@ function wsBindStaticButtons() {
   document.getElementById('ws-close-btn').addEventListener('click', closeWorkspaceModal);
   document.getElementById('ws-create-btn').addEventListener('click', createWorkspace);
   document.getElementById('ws-invite-btn').addEventListener('click', inviteMember);
-  document.getElementById('ws-switch-btn').addEventListener('click', async function() {
+  document.getElementById('ws-switch-btn').addEventListener('click', function() {
     const managingId = wsState.managingWsId;
     if (!managingId) return;
-    const wsObj = wsState.workspaces.find(function(w) { return w.id === managingId; });
-    const isVisible = !wsObj || wsObj.visible !== 0;
-    const newVisible = !isVisible;
-    const result = await api('PATCH', '/api/workspaces/' + managingId + '/visible', { visible: newVisible });
-    if (result && result.error) return toast(result.error, 'error');
-    // Update local state
-    if (wsObj) wsObj.visible = newVisible ? 1 : 0;
-    // If deactivating the current workspace, switch to personal
-    if (!newVisible && managingId === wsState.currentWsId) {
+    if (managingId === wsState.currentWsId) {
+      // Deactivate: switch to personal workspace
       const personal = wsState.workspaces.find(function(w) { return w.name.includes('(pessoal)'); });
       if (personal) switchWorkspace(personal.id);
+      else toast('Sem workspace pessoal disponível.', 'error');
+    } else {
+      switchWorkspace(managingId);
     }
-    toast(newVisible ? 'Workspace visível no menu!' : 'Workspace oculto do menu.', 'success');
-    renderWsSidebar();
     openManage(managingId);
   });
   document.getElementById('ws-delete-btn').addEventListener('click', deleteCurrentWorkspace);
@@ -4840,22 +4821,26 @@ async function openManage(wsId) {
   document.getElementById('ws-panel-name').textContent = (data.name || '').replace(' (pessoal)', '');
   document.getElementById('ws-panel-meta').textContent = 'Sua role: ' + (data.yourRole || '?') + ' · ' + (data.ep_count || 0) + ' endpoint(s)';
   document.getElementById('ws-panel-active').style.display = isCurrent ? 'inline' : 'none';
+  // Show toggle: if current = "Desativar" (switches to personal), if not current = "Ativar workspace"
   const switchBtn = document.getElementById('ws-switch-btn');
-  // Get current visibility state of this workspace for the user
-  const wsObj = wsState.workspaces.find(function(w) { return w.id === wsId; });
-  const isVisible = !wsObj || wsObj.visible !== 0;
-
-  if (isPersonal) {
-    // Personal workspace: always visible, no toggle
-    switchBtn.style.display = 'none';
-  } else if (isVisible) {
-    // Visible in menu → show "Desativar" (will hide from menu)
+  const isPersonalWs = wsState.workspaces.find(function(w) { return w.id === wsState.currentWsId && w.name.includes('(pessoal)'); });
+  if (isCurrent && !isPersonal) {
+    // Active non-personal ws: show "Desativar" button
     switchBtn.textContent = 'Desativar';
-    switchBtn.style.cssText = 'background:#1a1a1a;border:1px solid #2a2a2a;color:#888;display:inline-block;flex-shrink:0';
-  } else {
-    // Hidden from menu → show "Ativar workspace" (will show in menu)
+    switchBtn.style.background = '#1a1a1a';
+    switchBtn.style.borderColor = '#2a2a2a';
+    switchBtn.style.color = '#888';
+    switchBtn.style.display = 'inline-block';
+  } else if (!isCurrent) {
+    // Not active: show "Ativar workspace"
     switchBtn.textContent = 'Ativar workspace';
-    switchBtn.style.cssText = 'display:inline-block;flex-shrink:0';
+    switchBtn.style.background = '';
+    switchBtn.style.borderColor = '';
+    switchBtn.style.color = '';
+    switchBtn.style.display = 'inline-block';
+  } else {
+    // Personal and active — hide button
+    switchBtn.style.display = 'none';
   }
 
   // Sections visibility
@@ -6237,8 +6222,6 @@ function createVersionedRule(fromPath, version) {
 // ── USER DROPDOWN ────────────────────────────────────────────────────────────
 function toggleUserDropdown(e) {
   e.stopPropagation();
-  // If click originated from INSIDE the dropdown, ignore (let delegation handle it)
-  if (e.target.closest('#user-dropdown')) return;
   const dd = document.getElementById('user-dropdown');
   if (!dd) return;
   const isOpen = dd.style.display !== 'none';
@@ -6267,8 +6250,6 @@ document.addEventListener('click', function(e) {
   // User dropdown: navigation items
   const navItem = e.target.closest('[data-udd-nav]');
   if (navItem) {
-    const dd = document.getElementById('user-dropdown');
-    if (dd) dd.style.display = 'none';
     window.location.href = navItem.dataset.uddNav;
     return;
   }
@@ -6277,10 +6258,10 @@ document.addEventListener('click', function(e) {
   const actItem = e.target.closest('[data-udd-action]');
   if (actItem) {
     const act = actItem.dataset.uddAction;
-    const dd = document.getElementById('user-dropdown');
-    if (dd) dd.style.display = 'none';
     if (act === 'workspaces') showWorkspaceModal();
     else if (act === 'tokens') showTokenModal();
+    const dd = document.getElementById('user-dropdown');
+    if (dd) dd.style.display = 'none';
     return;
   }
 
@@ -6319,19 +6300,18 @@ function closeWsSwitcher() {
 function renderWsDDList(filter) {
   const list = document.getElementById('ws-dd-list');
   if (!list) return;
-  // Only show workspaces where visible !== 0 (undefined/null/1 = visible)
-  let wss = (wsState.workspaces || []).filter(function(w) { return w.visible !== 0 && w.visible !== false; });
+  let wss = wsState.workspaces || [];
   if (filter) wss = wss.filter(function(w) { return w.name.toLowerCase().includes(filter.toLowerCase()); });
-  if (!wss.length) { list.innerHTML = '<div style="font-size:11px;color:#444;padding:6px 10px">Nenhum workspace ativo</div>'; return; }
   list.innerHTML = wss.map(function(ws) {
     const isPersonal = ws.name.includes('(pessoal)');
     const displayName = ws.name.replace(' (pessoal)', '');
-    const isCurrent = ws.id === wsState.currentWsId;
+    const isActive = ws.id === wsState.currentWsId;
     const initials = displayName.slice(0,2).toUpperCase();
-    const planLabel = ws.role === 'owner' ? 'Pro' : (ws.role || '');
+    const planLabel = ws.role === 'owner' ? 'Pro' : ws.role;
     const bgColor = isPersonal ? 'linear-gradient(135deg,#00FF87,#00aaff)' : 'linear-gradient(135deg,#4dabf7,#7c3aed)';
-    return '<div class="ws-dd-item' + (isCurrent ? ' ws-dd-active' : '') + '" data-wsid="' + ws.id + '">'
-      + '<div class="ws-dd-av" style="background:' + bgColor + ';color:#000">' + initials + '</div>'
+    const textColor = '#000';
+    return '<div class="ws-dd-item' + (isActive ? ' ws-dd-active' : '') + '" data-wsid="' + ws.id + '">'
+      + '<div class="ws-dd-av" style="background:' + bgColor + ';color:' + textColor + '">' + initials + '</div>'
       + '<div class="ws-dd-info"><div class="ws-dd-iname">' + esc(displayName) + '</div><div class="ws-dd-iplan">' + planLabel + '</div></div>'
       + '</div>';
   }).join('');

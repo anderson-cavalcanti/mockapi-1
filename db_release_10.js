@@ -198,10 +198,6 @@ const migrateWorkspaces = db.transaction(() => {
 });
 try { migrateWorkspaces(); } catch(e) { console.warn('[db] workspace migration:', e.message); }
 
-// Migration: add visible column to workspace_members (controls menu visibility)
-try { db.exec(`ALTER TABLE workspace_members ADD COLUMN visible INTEGER DEFAULT 1`); } catch(_) {}
-// All existing memberships default to visible=1 (already set by DEFAULT)
-
 function safeJSON(s) { try { return JSON.parse(s); } catch(_) { return s||null; } }
 function safeStr(v)  { return typeof v==='string'?v:JSON.stringify(v)||null; }
 
@@ -459,16 +455,12 @@ module.exports = {
   getWorkspace(id) { return db.prepare(`SELECT * FROM workspaces WHERE id=?`).get(id); },
   getUserWorkspaces(userId) {
     return db.prepare(`
-      SELECT w.*, wm.role, wm.visible,
+      SELECT w.*, wm.role,
         (SELECT COUNT(*) FROM endpoints e WHERE e.workspace_id=w.id) as ep_count,
         (SELECT COUNT(*) FROM workspace_members wm2 WHERE wm2.workspace_id=w.id) as member_count
       FROM workspaces w
       JOIN workspace_members wm ON wm.workspace_id=w.id AND wm.user_id=?
       ORDER BY w.created_at ASC`).all(userId);
-  },
-  setWorkspaceVisible(wsId, userId, visible) {
-    db.prepare(`UPDATE workspace_members SET visible=? WHERE workspace_id=? AND user_id=?`)
-      .run(visible ? 1 : 0, wsId, userId);
   },
   renameWorkspace(id, name, userId) {
     db.prepare(`UPDATE workspaces SET name=? WHERE id=? AND owner_id=?`).run(name, id, userId);
