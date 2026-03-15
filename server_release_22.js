@@ -3333,68 +3333,24 @@ function getDashboardHTML(port, baseUrl, currentUser) {
     : '<div style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#00FF87,#0099ff);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#000;flex-shrink:0">'
       + (userLogin.slice(0,2).toUpperCase() || 'U') + '</div>';
 
-  // Admin gets a gold star item at top of dropdown
-  const adminItem = isAdmin
-    ? '<div class="udd-item" data-udd-nav="/admin" style="color:#FFD700">'
-        + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#FFD700" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>'
-        + 'Painel Admin</div>'
-        + '<hr style="border:none;border-top:1px solid #1e1e1e;margin:3px 0"/>'
-    : '';
-
-  // Minha conta: admin goes to /admin, others go to /upgrade
-  const myAccountNav = isAdmin ? '/admin' : '/upgrade';
-
-  const planBadge = '<span style="font-size:9px;font-weight:800;padding:1px 6px;border-radius:3px;'
-    + 'background:' + planBg + ';color:' + planColor + ';border:1px solid ' + planBorder + '">'
-    + userPlan + '</span>';
-
   // User bottom row HTML
   const userBarHtml = currentUser
-    ? '<div id="user-bar-row" style="display:flex;align-items:center;gap:8px;width:100%;'
-        + 'padding:8px 0 0;border-top:1px solid #1a1a1a;cursor:pointer;position:relative" '
-        + 'onclick="toggleUserDropdown(event)">'
+    ? '<div id="user-bar-row" style="display:flex;align-items:center;gap:8px;width:100%;padding:8px 0 0;border-top:1px solid #1a1a1a;cursor:pointer;position:relative" onclick="toggleUserDropdown(event)">'
       + avatarHtml
-      + '<span style="font-size:11px;font-weight:600;color:#aaa;flex:1;overflow:hidden;'
-          + 'text-overflow:ellipsis;white-space:nowrap">' + userLogin + '</span>'
-      + (isAdmin ? '<span style="font-size:9px;color:#FFD700;font-weight:700;flex-shrink:0">Admin</span>' : '')
-      + planBadge
-      + '<div id="user-dropdown" style="display:none;position:absolute;bottom:40px;left:-8px;right:-8px;'
-          + 'background:#141414;border:1px solid #2a2a2a;border-radius:10px;'
-          + 'box-shadow:0 -8px 24px rgba(0,0,0,.8);padding:5px;z-index:1000">'
-        + '<div style="display:flex;align-items:center;gap:9px;padding:9px 10px 10px;'
-            + 'border-bottom:1px solid #1e1e1e;margin-bottom:4px">'
-          + avatarHtml
-          + '<div style="flex:1;min-width:0">'
-            + '<div style="font-size:13px;font-weight:700;color:#fff;white-space:nowrap;'
-                + 'overflow:hidden;text-overflow:ellipsis">' + (userName||userLogin) + '</div>'
-            + '<div style="font-size:10px;color:#555;margin-top:2px;white-space:nowrap;'
-                + 'overflow:hidden;text-overflow:ellipsis">' + userEmail + '</div>'
-          + '</div>'
+      + '<span style="font-size:11px;font-weight:600;color:#aaa;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + userLogin + '</span>'
+      + (isAdmin ? '<span style="font-size:9px;color:#FFD700;font-weight:700">Admin</span>' : '')
+      + '<span style="font-size:9px;font-weight:800;padding:1px 6px;border-radius:3px;background:' + planBg + ';color:' + planColor + ';border:1px solid ' + planBorder + '">' + userPlan + '</span>'
+      + '<div id="user-dropdown" style="display:none;position:absolute;bottom:36px;left:-8px;right:-8px;background:#141414;border:1px solid #2a2a2a;border-radius:10px;box-shadow:0 -8px 24px rgba(0,0,0,.8);padding:5px;z-index:1000">'
+        + '<div style="padding:8px 10px 10px;border-bottom:1px solid #1e1e1e;margin-bottom:4px">'
+          + '<div style="font-size:13px;font-weight:700;color:#fff">' + userName + '</div>'
+          + '<div style="font-size:10px;color:#555;margin-top:1px">' + userEmail + '</div>'
         + '</div>'
-        + adminItem
-        + '<div class="udd-item" data-udd-nav="' + myAccountNav + '">'
-            + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
-            + '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
-            + 'Minha conta</div>'
-        + '<div class="udd-item" data-udd-action="workspaces">'
-            + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
-            + '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>'
-            + 'Workspaces</div>'
-        + '<div class="udd-item" data-udd-nav="/upgrade">'
-            + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
-            + '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>'
-            + 'Upgrade de plano</div>'
-        + '<div class="udd-item" data-udd-action="tokens">'
-            + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
-            + '<circle cx="12" cy="12" r="3"/>'
-            + '<path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>'
-            + 'API Tokens</div>'
-        + '<hr style="border:none;border-top:1px solid #1e1e1e;margin:3px 0"/>'
-        + '<div class="udd-item udd-danger" data-udd-nav="/auth/logout">'
-            + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'
-            + '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>'
-            + '<polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>'
-            + 'Sair</div>'
+        + '<div class="udd-item" data-udd-nav="/account"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Minha conta</div>'
+        + '<div class="udd-item" data-udd-action="workspaces"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Workspaces</div>'
+        + '<div class="udd-item" data-udd-nav="/upgrade"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Upgrade de plano</div>'
+        + '<div class="udd-item" data-udd-action="tokens"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>API Tokens</div>'
+        + '<hr style="border:none;border-top:1px solid #1e1e1e;margin:4px 0"/>'
+        + '<div class="udd-item udd-danger" data-udd-nav="/auth/logout"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Sair</div>'
       + '</div>'
     + '</div>'
     : '';
@@ -3696,7 +3652,7 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
         <span class="sb-ws-name" id="ws-name">Pessoal</span>
         <svg class="sb-ws-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         <!-- WS Switcher Dropdown -->
-        <div class="ws-switcher-dd" id="ws-switcher-dd">
+        <div class="ws-switcher-dd" id="ws-switcher-dd" onclick="event.stopPropagation()">
           <div class="ws-dd-search">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#555" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <input placeholder="Buscar workspace..." oninput="filterWsDD(this.value)" id="ws-dd-search-input"/>
@@ -6196,33 +6152,10 @@ function toggleUserDropdown(e) {
   dd.style.display = isOpen ? 'none' : 'block';
 }
 
-// Event delegation — handles all dropdown interactions
+// Event delegation for user dropdown items (data-udd-nav / data-udd-action)
 document.addEventListener('click', function(e) {
-  // WS switcher items
-  const wsItem = e.target.closest('[data-wsid]');
-  if (wsItem) {
-    e.stopPropagation();
-    selectWsFromDD(wsItem.dataset.wsid);
-    return;
-  }
-
-  // WS new workspace button inside dd
-  const wsDdNew = e.target.closest('.ws-dd-new');
-  if (wsDdNew) {
-    e.stopPropagation();
-    closeWsSwitcher();
-    showWorkspaceModal('new');
-    return;
-  }
-
-  // User dropdown: navigation items
   const navItem = e.target.closest('[data-udd-nav]');
-  if (navItem) {
-    window.location.href = navItem.dataset.uddNav;
-    return;
-  }
-
-  // User dropdown: action items
+  if (navItem) { window.location.href = navItem.dataset.uddNav; return; }
   const actItem = e.target.closest('[data-udd-action]');
   if (actItem) {
     const act = actItem.dataset.uddAction;
@@ -6232,16 +6165,9 @@ document.addEventListener('click', function(e) {
     if (dd) dd.style.display = 'none';
     return;
   }
-
-  // Clicks INSIDE ws dropdown — don't close it
-  const wsDd = e.target.closest('#ws-switcher-dd');
-  if (wsDd) { e.stopPropagation(); return; }
-
-  // Clicks INSIDE user dropdown — don't close it
-  const userDd = e.target.closest('#user-dropdown');
-  if (userDd) { e.stopPropagation(); return; }
-
-  // Outside click — close everything
+  const wsItem = e.target.closest('[data-wsid]');
+  if (wsItem) { selectWsFromDD(wsItem.dataset.wsid); return; }
+  // Close all dropdowns on outside click
   const dd = document.getElementById('user-dropdown');
   if (dd) dd.style.display = 'none';
   closeWsSwitcher();
@@ -6253,13 +6179,15 @@ function toggleWsSwitcher(e) {
   const dd = document.getElementById('ws-switcher-dd');
   if (!dd) return;
   const isOpen = dd.classList.contains('open');
-  if (isOpen) { dd.classList.remove('open'); return; }
-  dd.classList.add('open');
-  renderWsDDList();
-  setTimeout(function() {
-    const inp = document.getElementById('ws-dd-search-input');
-    if (inp) inp.focus();
-  }, 80);
+  if (isOpen) { dd.classList.remove('open'); }
+  else {
+    dd.classList.add('open');
+    renderWsDDList();
+    setTimeout(function() {
+      const inp = document.getElementById('ws-dd-search-input');
+      if (inp) inp.focus();
+    }, 80);
+  }
 }
 function closeWsSwitcher() {
   const dd = document.getElementById('ws-switcher-dd');
