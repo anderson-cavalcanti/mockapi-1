@@ -1575,8 +1575,8 @@ function getLoginHTML(baseUrl) {
   <h1>MockAPI Inspector</h1>
   <p class="sub">Mock server com CRUD real, Faker integrado e import OpenAPI.</p>
   <div class="error-box" id="err-box">Erro ao autenticar. Tente novamente.</div>
-  \${googleBtn}
-  \${githubBtn}
+  ${googleBtn}
+  ${githubBtn}
   <div class="features">
     <div class="feature"><span class="icon">✦</span><span>CRUD com estado real — GET, POST, PUT, DELETE automáticos</span></div>
     <div class="feature"><span class="icon">✦</span><span>Faker integrado — seed de dados realistas em 1 clique</span></div>

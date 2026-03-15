@@ -30,9 +30,9 @@ process.emit = function(name, data) {
   return origEmit.apply(process, arguments);
 };
 
-const db     = require('./db.js');
-const faker  = require('./faker.js');
-const { parseOpenAPI } = require('./openapi.js');
+const db     = require('../db.js');
+const faker  = require('../faker.js');
+const { parseOpenAPI } = require('../openapi.js');
 
 function genId(len = 6) {
   return crypto.randomBytes(len).toString('hex').toUpperCase().slice(0, len);
@@ -4102,18 +4102,7 @@ function handleWsEvent(msg) {
     case 'endpoint_updated':
       state.endpoints[payload.id] = payload;
       if (state.selectedEp === payload.id) updateHeaderStats();
-      // Surgical update: only touch the affected list item, not the whole list
-      (function() {
-        const el = document.querySelector('[data-ep-id="' + payload.id + '"]');
-        if (el) {
-          const nameEl  = el.querySelector('.ep-name');
-          const countEl = el.querySelector('.ep-count');
-          if (nameEl)  nameEl.textContent  = payload.name;
-          if (countEl) countEl.textContent = (payload.requestCount || 0) + ' req';
-        } else {
-          renderEndpointList(); // fallback if element not found yet
-        }
-      })();
+      renderEndpointList();
       break;
     case 'new_request':
       if (!state.isLive) break;
@@ -4149,8 +4138,7 @@ function handleWsEvent(msg) {
       break;
     case 'crud_table_updated':
       state.crudTables[payload.key] = { ...payload };
-      // Only re-render if user is on the CRUD tab — avoid hidden DOM thrashing
-      if (state.selectedEp && state.currentTab === 'crud') renderCrudTables();
+      if (state.selectedEp) renderCrudTables();
       break;
     case 'workspace_member_removed':
       // If this client's user was removed, fall back to personal workspace
@@ -4264,14 +4252,7 @@ function showUpgradeBanner(limit) {
 
 async function deleteEndpoint(id, e) {
   e.stopPropagation();
-  const res = await api('DELETE', '/api/endpoints/' + id);
-  if (res && res.error) { toast('Erro ao remover endpoint.', 'error'); return; }
-  // Update state immediately — don't wait for WS event (prevents ghost entries)
-  delete state.endpoints[id];
-  delete state.requests[id];
-  delete state.rules[id];
-  if (state.selectedEp === id) { state.selectedEp = null; showEmptyMain(); }
-  renderEndpointList();
+  await api('DELETE', '/api/endpoints/' + id);
   toast('Endpoint removido.', 'error');
 }
 
@@ -4715,76 +4696,24 @@ function renderEndpointList() {
   const list = document.getElementById('ep-list');
   const eps = Object.values(state.endpoints);
   document.getElementById('ep-label').textContent = \`ENDPOINTS (\${eps.length})\`;
-
   if (eps.length === 0) {
     list.innerHTML = '<div class="empty-state" style="padding:24px 16px"><div style="font-size:13px;color:#333">Nenhum endpoint ainda</div></div>';
     return;
   }
-
-  // ── Surgical DOM diff: avoid full innerHTML re-render (prevents flash on WS events) ──
-  const existingIds = new Set([...list.querySelectorAll('[data-ep-id]')].map(el => el.dataset.epId));
-  const currentIds  = new Set(eps.map(ep => ep.id));
-
-  // Remove stale nodes
-  existingIds.forEach(id => {
-    if (!currentIds.has(id)) {
-      const el = list.querySelector('[data-ep-id="' + id + '"]');
-      if (el) el.remove();
-    }
-  });
-
-  // Insert or update each endpoint
-  eps.forEach(function(ep, i) {
-    const isActive = state.selectedEp === ep.id;
-    let el = list.querySelector('[data-ep-id="' + ep.id + '"]');
-
-    if (!el) {
-      el = document.createElement('div');
-      el.dataset.epId = ep.id;
-      el.addEventListener('click', function() { selectEndpoint(ep.id); });
-
-      const nameDiv  = document.createElement('div');
-      nameDiv.className = 'ep-name';
-
-      const metaDiv  = document.createElement('div');
-      metaDiv.className = 'ep-meta';
-
-      const idSpan   = document.createElement('span');
-      idSpan.className = 'ep-id';
-
-      const rightDiv = document.createElement('div');
-      rightDiv.style.cssText = 'display:flex;align-items:center;gap:8px';
-
-      const countSpan = document.createElement('span');
-      countSpan.className = 'ep-count';
-
-      const delBtn = document.createElement('button');
-      delBtn.className = 'ep-del';
-      delBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>';
-      delBtn.addEventListener('click', function(e) { deleteEndpoint(ep.id, e); });
-
-      rightDiv.appendChild(countSpan);
-      rightDiv.appendChild(delBtn);
-      metaDiv.appendChild(idSpan);
-      metaDiv.appendChild(rightDiv);
-      el.appendChild(nameDiv);
-      el.appendChild(metaDiv);
-
-      // Insert at the right position
-      const allItems = [...list.querySelectorAll('[data-ep-id]')];
-      if (i < allItems.length) {
-        list.insertBefore(el, allItems[i]);
-      } else {
-        list.appendChild(el);
-      }
-    }
-
-    // Update mutable fields in-place (no full re-render)
-    el.className = 'ep-item' + (isActive ? ' active' : '');
-    el.querySelector('.ep-name').textContent = ep.name;
-    el.querySelector('.ep-id').textContent = ep.id;
-    el.querySelector('.ep-count').textContent = (ep.requestCount || 0) + ' req';
-  });
+  list.innerHTML = eps.map(ep => \`
+    <div class="ep-item \${state.selectedEp === ep.id ? 'active' : ''}" onclick="selectEndpoint('\${ep.id}')">
+      <div class="ep-name">\${esc(ep.name)}</div>
+      <div class="ep-meta">
+        <span class="ep-id">\${ep.id}</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="ep-count">\${ep.requestCount || 0} req</span>
+          <button class="ep-del" onclick="deleteEndpoint('\${ep.id}',event)">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  \`).join('');
 }
 
 async function selectEndpoint(id) {
@@ -4908,7 +4837,7 @@ function reqRowHTML(r, isNew) {
   const sc = STATUS_COLORS[r.status] || {bg:'#555',t:'#fff'};
   const mc = METHOD_COLORS[r.method] || '#aaa';
   const ts = new Date(r.timestamp).toLocaleTimeString('pt-BR');
-  return \`<div class="req-item \${isNew?'new-req':''} \${state.selectedReq?.id===r.id?'selected':''}" data-req-id="\${r.id}" onclick="selectRequest('\${r.id}')">
+  return \`<div class="req-item \${isNew?'new-req':''} \${state.selectedReq?.id===r.id?'selected':''}" onclick="selectRequest('\${r.id}')">
     <div class="req-top">
       <div style="display:flex;align-items:center;gap:10px">
         <span class="method" style="color:\${mc}">\${r.method}</span>
@@ -4940,10 +4869,9 @@ function selectRequest(id) {
   if (!req) return;
   state.selectedReq = req;
 
-  // Update feed selection — no reliance on implicit global event
+  // Update feed selection
   document.querySelectorAll('.req-item').forEach(el => el.classList.remove('selected'));
-  const target = document.querySelector('.req-item[data-req-id="' + id + '"]');
-  if (target) target.classList.add('selected');
+  event.currentTarget.classList.add('selected');
 
   showInspector(req);
 }
@@ -5373,63 +5301,26 @@ function renderCrudDataTable(rows, idField) {
     container.innerHTML = '<div style="padding:32px;text-align:center;color:#333;font-size:14px">Nenhum dado ainda. Faça um POST para inserir registros.</div>';
     return;
   }
+  // Collect all columns
   const cols = [...new Set(rows.flatMap(r => Object.keys(r)))];
-
-  const table = document.createElement('table');
-  table.style.cssText = 'width:100%;border-collapse:collapse;font-family:monospace;font-size:12px';
-
-  // Header
-  const thead = document.createElement('thead');
-  const headRow = document.createElement('tr');
-  headRow.style.borderBottom = '2px solid #2a2a2a';
-  cols.forEach(function(c) {
-    const th = document.createElement('th');
-    th.style.cssText = 'padding:8px 12px;text-align:left;color:#7DD3FC;font-weight:700;white-space:nowrap';
-    th.textContent = c;
-    headRow.appendChild(th);
-  });
-  const thAct = document.createElement('th');
-  thAct.style.cssText = 'padding:8px 12px;color:#555';
-  thAct.textContent = 'Ações';
-  headRow.appendChild(thAct);
-  thead.appendChild(headRow);
-  table.appendChild(thead);
-
-  // Body
-  const tbody = document.createElement('tbody');
-  rows.forEach(function(row) {
-    const tr = document.createElement('tr');
-    tr.style.borderBottom = '1px solid #1a1a1a';
-    tr.addEventListener('mouseover',  function() { tr.style.background = '#111'; });
-    tr.addEventListener('mouseout',   function() { tr.style.background = 'transparent'; });
-
-    cols.forEach(function(c) {
-      const td = document.createElement('td');
-      td.style.cssText = 'padding:8px 12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:' + (c === idField ? '#00FF87' : '#d4d4d4');
-      td.textContent = row[c] != null ? String(row[c]) : '—';
-      tr.appendChild(td);
-    });
-
-    // Delete button cell
-    const tdAct = document.createElement('td');
-    tdAct.style.cssText = 'padding:8px 12px';
-    const delBtn = document.createElement('button');
-    delBtn.style.cssText = 'background:none;border:none;color:#333;cursor:pointer';
-    delBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>';
-    delBtn.addEventListener('mouseover', function() { delBtn.style.color = '#FF4444'; });
-    delBtn.addEventListener('mouseout',  function() { delBtn.style.color = '#333'; });
-    delBtn.addEventListener('click', function() {
-      const rowId = String(row[idField] != null ? row[idField] : '');
-      deleteRowFromTable(rowId, idField);
-    });
-    tdAct.appendChild(delBtn);
-    tr.appendChild(tdAct);
-    tbody.appendChild(tr);
-  });
-  table.appendChild(tbody);
-
-  container.innerHTML = '';
-  container.appendChild(table);
+  container.innerHTML = \`<table style="width:100%;border-collapse:collapse;font-family:'Space Mono',monospace;font-size:12px">
+    <thead>
+      <tr style="border-bottom:2px solid #2a2a2a">
+        \${cols.map(c => \`<th style="padding:8px 12px;text-align:left;color:#7DD3FC;font-weight:700;white-space:nowrap">\${esc(c)}</th>\`).join('')}
+        <th style="padding:8px 12px;color:#555">Ações</th>
+      </tr>
+    </thead>
+    <tbody>
+      \${rows.map(row => \`<tr style="border-bottom:1px solid #1a1a1a" onmouseover="this.style.background='#111'" onmouseout="this.style.background='transparent'">
+        \${cols.map(c => \`<td style="padding:8px 12px;color:\${c === idField ? '#00FF87' : '#d4d4d4'};max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">\${esc(row[c] != null ? String(row[c]) : '—')}</td>\`).join('')}
+        <td style="padding:8px 12px">
+          <button onclick="deleteRowFromTable('\${esc(String(row[idField]))}','\${idField}')" style="background:none;border:none;color:#333;cursor:pointer" onmouseover="this.style.color='#FF4444'" onmouseout="this.style.color='#333'">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+          </button>
+        </td>
+      </tr>\`).join('')}
+    </tbody>
+  </table>\`;
 }
 
 async function deleteRowFromTable(rowId, idField) {
