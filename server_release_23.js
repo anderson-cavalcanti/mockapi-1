@@ -3358,7 +3358,7 @@ function getDashboardHTML(port, baseUrl, currentUser) {
           + 'text-overflow:ellipsis;white-space:nowrap">' + userLogin + '</span>'
       + (isAdmin ? '<span style="font-size:9px;color:#FFD700;font-weight:700;flex-shrink:0">Admin</span>' : '')
       + planBadge
-      + '<div id="user-dropdown" onclick="event.stopPropagation()" style="display:none;position:absolute;bottom:40px;left:-8px;right:-8px;'
+      + '<div id="user-dropdown" style="display:none;position:absolute;bottom:40px;left:-8px;right:-8px;'
           + 'background:#141414;border:1px solid #2a2a2a;border-radius:10px;'
           + 'box-shadow:0 -8px 24px rgba(0,0,0,.8);padding:5px;z-index:1000">'
         + '<div style="display:flex;align-items:center;gap:9px;padding:9px 10px 10px;'
@@ -4659,17 +4659,7 @@ function wsBindStaticButtons() {
   document.getElementById('ws-create-btn').addEventListener('click', createWorkspace);
   document.getElementById('ws-invite-btn').addEventListener('click', inviteMember);
   document.getElementById('ws-switch-btn').addEventListener('click', function() {
-    const managingId = wsState.managingWsId;
-    if (!managingId) return;
-    if (managingId === wsState.currentWsId) {
-      // Deactivate: switch to personal workspace
-      const personal = wsState.workspaces.find(function(w) { return w.name.includes('(pessoal)'); });
-      if (personal) switchWorkspace(personal.id);
-      else toast('Sem workspace pessoal disponível.', 'error');
-    } else {
-      switchWorkspace(managingId);
-    }
-    openManage(managingId);
+    if (wsState.managingWsId) switchWorkspace(wsState.managingWsId);
   });
   document.getElementById('ws-delete-btn').addEventListener('click', deleteCurrentWorkspace);
   document.getElementById('ws-new-name').addEventListener('keydown', function(e) {
@@ -4821,27 +4811,7 @@ async function openManage(wsId) {
   document.getElementById('ws-panel-name').textContent = (data.name || '').replace(' (pessoal)', '');
   document.getElementById('ws-panel-meta').textContent = 'Sua role: ' + (data.yourRole || '?') + ' · ' + (data.ep_count || 0) + ' endpoint(s)';
   document.getElementById('ws-panel-active').style.display = isCurrent ? 'inline' : 'none';
-  // Show toggle: if current = "Desativar" (switches to personal), if not current = "Ativar workspace"
-  const switchBtn = document.getElementById('ws-switch-btn');
-  const isPersonalWs = wsState.workspaces.find(function(w) { return w.id === wsState.currentWsId && w.name.includes('(pessoal)'); });
-  if (isCurrent && !isPersonal) {
-    // Active non-personal ws: show "Desativar" button
-    switchBtn.textContent = 'Desativar';
-    switchBtn.style.background = '#1a1a1a';
-    switchBtn.style.borderColor = '#2a2a2a';
-    switchBtn.style.color = '#888';
-    switchBtn.style.display = 'inline-block';
-  } else if (!isCurrent) {
-    // Not active: show "Ativar workspace"
-    switchBtn.textContent = 'Ativar workspace';
-    switchBtn.style.background = '';
-    switchBtn.style.borderColor = '';
-    switchBtn.style.color = '';
-    switchBtn.style.display = 'inline-block';
-  } else {
-    // Personal and active — hide button
-    switchBtn.style.display = 'none';
-  }
+  document.getElementById('ws-switch-btn').style.display = (!isCurrent) ? 'inline-block' : 'none';
 
   // Sections visibility
   document.getElementById('ws-invite-box').style.display = isOwner ? 'block' : 'none';
@@ -4959,10 +4929,8 @@ async function createWorkspace() {
   document.getElementById('ws-new-name').value = '';
   await loadWorkspaces();
   renderWsSidebar();
-  // Auto-activate the new workspace immediately — no need to click "Ativar"
-  switchWorkspace(result.id);
   openManage(result.id);
-  toast('Workspace "' + esc(name) + '" criado e ativado!', 'success');
+  toast('Workspace "' + esc(name) + '" criado!', 'success');
 }
 
 async function inviteMember() {
