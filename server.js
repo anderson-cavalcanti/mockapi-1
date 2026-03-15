@@ -5376,7 +5376,7 @@ function renderCrudDataTable(rows, idField) {
   const cols = [...new Set(rows.flatMap(r => Object.keys(r)))];
 
   const table = document.createElement('table');
-  table.style.cssText = 'width:100%;border-collapse:collapse;font-family:\'Space Mono\',monospace;font-size:12px';
+  table.style.cssText = 'width:100%;border-collapse:collapse;font-family:monospace;font-size:12px';
 
   // Header
   const thead = document.createElement('thead');
