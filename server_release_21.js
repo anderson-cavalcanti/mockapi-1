@@ -3316,44 +3316,18 @@ td:nth-child(2){color:#888;font-size:12px}
 function getDashboardHTML(port, baseUrl, currentUser) {
   baseUrl = baseUrl || 'http://localhost:' + port;
   // Pre-build user bar HTML (avoids nested template literal escaping issues)
-  // User info for sidebar bottom row and user dropdown
-  const userLogin   = currentUser ? (currentUser.login || '') : '';
-  const userName    = currentUser ? (currentUser.name  || currentUser.login || '') : '';
-  const userEmail   = currentUser ? (currentUser.email || '') : '';
-  const userAvatar  = currentUser ? (currentUser.avatar || '') : '';
-  const userPlan    = currentUser ? (currentUser.plan  || 'free').toUpperCase() : '';
-  const isAdmin     = currentUser ? !!currentUser.isAdmin : false;
-  const planColor   = userPlan === 'PRO' ? '#00FF87' : userPlan === 'TEAM' ? '#4dabf7' : '#fca130';
-  const planBg      = userPlan === 'PRO' ? '#0d2b1e' : userPlan === 'TEAM' ? '#0d1a2b' : '#2a1a00';
-  const planBorder  = userPlan === 'PRO' ? '#00FF8733' : userPlan === 'TEAM' ? '#4dabf733' : '#fca13033';
-
-  // Avatar: img if available, else initials
-  const avatarHtml = userAvatar
-    ? '<img src="' + userAvatar + '" style="width:28px;height:28px;border-radius:50%;flex-shrink:0;border:1px solid #2a2a2a"/>'
-    : '<div style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#00FF87,#0099ff);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#000;flex-shrink:0">'
-      + (userLogin.slice(0,2).toUpperCase() || 'U') + '</div>';
-
-  // User bottom row HTML
-  const userBarHtml = currentUser
-    ? '<div id="user-bar-row" style="display:flex;align-items:center;gap:8px;width:100%;padding:8px 0 0;border-top:1px solid #1a1a1a;cursor:pointer;position:relative" onclick="toggleUserDropdown(event)">'
-      + avatarHtml
-      + '<span style="font-size:11px;font-weight:600;color:#aaa;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + userLogin + '</span>'
-      + (isAdmin ? '<span style="font-size:9px;color:#FFD700;font-weight:700">Admin</span>' : '')
-      + '<span style="font-size:9px;font-weight:800;padding:1px 6px;border-radius:3px;background:' + planBg + ';color:' + planColor + ';border:1px solid ' + planBorder + '">' + userPlan + '</span>'
-      + '<div id="user-dropdown" style="display:none;position:absolute;bottom:36px;left:-8px;right:-8px;background:#141414;border:1px solid #2a2a2a;border-radius:10px;box-shadow:0 -8px 24px rgba(0,0,0,.8);padding:5px;z-index:1000">'
-        + '<div style="padding:8px 10px 10px;border-bottom:1px solid #1e1e1e;margin-bottom:4px">'
-          + '<div style="font-size:13px;font-weight:700;color:#fff">' + userName + '</div>'
-          + '<div style="font-size:10px;color:#555;margin-top:1px">' + userEmail + '</div>'
-        + '</div>'
-        + '<div class="udd-item" data-udd-nav="/account"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Minha conta</div>'
-        + '<div class="udd-item" data-udd-action="workspaces"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Workspaces</div>'
-        + '<div class="udd-item" data-udd-nav="/upgrade"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Upgrade de plano</div>'
-        + '<div class="udd-item" data-udd-action="tokens"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>API Tokens</div>'
-        + '<hr style="border:none;border-top:1px solid #1e1e1e;margin:4px 0"/>'
-        + '<div class="udd-item udd-danger" data-udd-nav="/auth/logout"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Sair</div>'
-      + '</div>'
-    + '</div>'
-    : '';
+  let userBarHtml = '';
+  if (currentUser) {
+    const adminLink = currentUser.isAdmin
+      ? '<a href="/admin" style="font-size:10px;color:#FFD700;text-decoration:none;white-space:nowrap">Admin</a>'
+      : '';
+    userBarHtml = '<div style="display:flex;align-items:center;gap:8px;width:100%;padding-top:4px;border-top:1px solid #1a1a1a">'
+      + '<img src="' + (currentUser.avatar||'') + '" style="width:24px;height:24px;border-radius:50%;flex-shrink:0"/>'
+      + '<span style="font-size:12px;color:#aaa;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (currentUser.login||'') + '</span>'
+      + adminLink
+      + '<a href="/auth/logout" style="font-size:10px;color:#555;text-decoration:none">Sair</a>'
+      + '</div>';
+  }
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -3381,71 +3355,30 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 
 /* LAYOUT */
 #app{display:flex;height:100vh}
-#sidebar{width:240px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+#sidebar{width:260px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
 #main{flex:1;display:flex;flex-direction:column;overflow:hidden}
 
 /* SIDEBAR */
-.logo{padding:12px 14px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
-.logo-icon{width:32px;height:32px;background:var(--green);border-radius:8px;display:flex;align-items:center;justify-content:center;box-shadow:0 0 12px #00FF8755;flex-shrink:0}
-.logo-text{font-size:14px;font-weight:800;color:#fff;letter-spacing:-0.3px}
-.logo-sub{font-size:8px;color:var(--text3);font-family:'Space Mono',monospace;letter-spacing:1px;text-transform:uppercase}
-
-/* Workspace section */
-.sb-ws-section{padding:7px 10px 5px}
-.sb-ws-label{font-size:9px;font-weight:700;color:#333;letter-spacing:.07em;text-transform:uppercase;margin-bottom:5px}
-.sb-ws-row{display:flex;align-items:center;gap:7px;background:#111;border:1px solid #1e1e1e;border-radius:8px;padding:8px 10px;cursor:pointer;transition:border-color .15s;position:relative}
-.sb-ws-row:hover{border-color:#2a2a2a}
-.sb-ws-av{width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,#00FF87,#00aaff);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#000;flex-shrink:0}
-.sb-ws-name{font-size:12px;font-weight:700;color:#ccc;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sb-ws-chevron{font-size:9px;color:#555;flex-shrink:0}
-
-/* Workspace dropdown */
-.ws-switcher-dd{position:absolute;top:calc(100% + 4px);left:0;right:0;background:#141414;border:1px solid #2a2a2a;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.8);padding:5px;z-index:500;display:none}
-.ws-switcher-dd.open{display:block;animation:ddIn .12s ease}
-.ws-dd-search{display:flex;align-items:center;gap:6px;background:#1e1e1e;border:1px solid #2a2a2a;border-radius:6px;padding:6px 9px;margin-bottom:4px}
-.ws-dd-search input{background:none;border:none;outline:none;color:#ccc;font-size:11px;font-family:inherit;width:100%}
-.ws-dd-search input::placeholder{color:#444}
-.ws-dd-item{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:7px;cursor:pointer;transition:background .12s}
-.ws-dd-item:hover{background:#1e1e1e}
-.ws-dd-item.ws-dd-active{background:#0d2b1e}
-.ws-dd-av{width:26px;height:26px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;flex-shrink:0}
-.ws-dd-info{flex:1;min-width:0}
-.ws-dd-iname{font-size:11px;font-weight:600;color:#ccc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ws-dd-iplan{font-size:9px;color:#555;margin-top:1px}
-.ws-dd-sep{border:none;border-top:1px solid #1e1e1e;margin:3px 0}
-.ws-dd-new{color:#00FF8766;font-size:11px}
-.ws-dd-new:hover{color:#00FF87;background:#0d2b1e22}
-
-/* Novo Endpoint btn */
-.new-ep-btn{margin:6px 10px 5px;background:var(--green-dim);border:1.5px solid var(--green-border);border-radius:9px;padding:10px;color:var(--green);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:7px;transition:all .2s;width:calc(100% - 20px)}
-.new-ep-btn:hover{background:#00FF8728;border-style:solid;border-color:#00FF8866}
-
-.ep-section-label{font-size:9px;color:var(--text4);font-family:'Space Mono',monospace;padding:5px 12px 3px;letter-spacing:1px}
-.ep-list{flex:1;overflow:auto;padding:0 7px}
-.ep-item{padding:9px 10px;border-radius:8px;cursor:pointer;border:1px solid transparent;margin-bottom:3px;transition:all .15s;animation:slideIn .2s ease;min-width:0}
+.logo{padding:18px 20px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+.logo-icon{width:34px;height:34px;background:var(--green);border-radius:8px;display:flex;align-items:center;justify-content:center;box-shadow:0 0 16px #00FF8766;flex-shrink:0}
+.logo-text{font-size:15px;font-weight:700;color:#fff;letter-spacing:-0.3px}
+.logo-sub{font-size:9px;color:var(--text3);font-family:'Space Mono',monospace;letter-spacing:1px}
+.new-ep-btn{margin:12px;background:var(--green-dim);border:1px dashed var(--green-border);border-radius:8px;padding:10px;color:var(--green);font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:8px;transition:all .2s;width:calc(100% - 24px)}
+.new-ep-btn:hover{background:#00FF8733;border-style:solid}
+.ep-section-label{font-size:9px;color:var(--text4);font-family:'Space Mono',monospace;padding:8px 16px 4px;letter-spacing:1px}
+.ep-list{flex:1;overflow:auto;padding:0 8px}
+.ep-item{padding:10px 12px;border-radius:8px;cursor:pointer;border:1px solid transparent;margin-bottom:4px;transition:all .15s;animation:slideIn .2s ease;min-width:0}
 .ep-item:hover{background:var(--bg3)}
 .ep-item.active{background:var(--bg4);border-color:var(--border2)}
-.ep-name{font-size:12px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;display:block}
-.ep-meta{display:flex;justify-content:space-between;align-items:center;margin-top:3px;gap:4px;min-width:0}
-.ep-id{font-size:9px;color:var(--text3);font-family:'Space Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
-.ep-count{font-size:10px;color:var(--text3);font-family:'Space Mono',monospace;white-space:nowrap;flex-shrink:0}
+.ep-name{font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;display:block}
+.ep-meta{display:flex;justify-content:space-between;align-items:center;margin-top:4px;gap:4px;min-width:0}
+.ep-id{font-size:10px;color:var(--text3);font-family:'Space Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.ep-count{font-size:11px;color:var(--text3);font-family:'Space Mono',monospace;white-space:nowrap;flex-shrink:0}
 .ep-del{background:none;border:none;color:var(--text4);padding:2px 4px;opacity:0;transition:all .2s}
 .ep-item:hover .ep-del{opacity:1}
 .ep-del:hover{color:var(--red)!important}
-.sidebar-footer{padding:10px 12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px}
-.status-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 5px var(--green);flex-shrink:0;animation:pulse 2s infinite}
-
-/* User dropdown items */
-.udd-item{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;cursor:pointer;font-size:12px;color:#777;transition:background .12s}
-.udd-item:hover{background:#1e1e1e;color:#ccc}
-.udd-danger:hover{background:#2a1515!important;color:#ff6b6b!important}
-
-/* TIME badge in header */
-.badge-time{background:#00FF8715;border:1px solid #00FF8733;color:#00FF88;cursor:pointer;display:flex;align-items:center;gap:4px;transition:all .15s}
-.badge-time:hover{background:#00FF8725;border-color:#00FF8866}
-.time-pulse{width:5px;height:5px;border-radius:50%;background:#00FF87;animation:tpulse 2s infinite}
-@keyframes tpulse{0%,100%{opacity:.3}50%{opacity:1}}
-@keyframes ddIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+.sidebar-footer{padding:12px 16px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);flex-shrink:0;animation:pulse 2s infinite}
 
 /* HEADER BAR */
 #header{padding:13px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:16px;background:var(--bg2);flex-shrink:0}
@@ -3580,43 +3513,6 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 .url-test-btn{background:var(--green-dim);border:1px solid var(--green-border);border-radius:6px;padding:6px 12px;color:var(--green);font-size:11px;font-weight:700;font-family:'Space Mono',monospace;margin-top:8px;transition:all .2s;width:100%}
 .url-test-btn:hover{background:#00FF8733}
 
-/* TIME PANEL */
-#time-panel{width:0;flex-shrink:0;overflow:hidden;background:var(--bg2);border-left:0px solid var(--border);display:flex;flex-direction:column;transition:width .22s cubic-bezier(.4,0,.2,1),border-left-width .22s}
-#time-panel.open{width:210px;border-left-width:1px}
-.tp-header{padding:10px 12px 7px;border-bottom:1px solid #161616;flex-shrink:0}
-.tp-title{font-size:12px;font-weight:700;color:#00FF87}
-.tp-sub{font-size:10px;color:#333;margin-top:1px}
-.tp-scroll{flex:1;overflow-y:auto;padding:4px 8px}
-.tp-lbl{font-size:9px;font-weight:700;color:#2a2a2a;letter-spacing:.07em;padding:5px 3px 2px;text-transform:uppercase}
-.tp-mrow{display:flex;align-items:center;gap:8px;padding:6px 7px;border-radius:6px;cursor:pointer;margin-bottom:1px;transition:background .12s}
-.tp-mrow:hover{background:#141414}
-.tp-mav-w{position:relative;flex-shrink:0}
-.tp-mav{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:#000}
-.tp-sdot{width:8px;height:8px;border-radius:50%;border:1.5px solid var(--bg2);position:absolute;bottom:-1px;right:-1px}
-.s-on{background:#00FF87}.s-aw{background:#fca130}.s-off{background:#444}
-.tp-minfo{flex:1;min-width:0}
-.tp-mname{font-size:11px;font-weight:600;color:#bbb;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tp-mrole{font-size:9px;margin-top:1px}
-.r-ow{color:#00FF8755}.r-ed{color:#4dabf755}.r-vi{color:#55555599}
-.tp-sug{background:#0d1a11;border:1px solid #00FF8818;border-radius:7px;padding:7px 9px;margin:5px 0}
-.tp-sug-lbl{font-size:8px;font-weight:700;color:#00FF8655;letter-spacing:.07em;margin-bottom:5px;text-transform:uppercase}
-.tp-sug-row{display:flex;align-items:center;gap:7px;padding:3px 0}
-.tp-sug-av{width:20px;height:20px;border-radius:50%;flex-shrink:0;object-fit:cover;background:#2a2a2a}
-.tp-sug-name{font-size:10px;color:#888;flex:1}
-.tp-sug-ws{font-size:9px;color:#444}
-.tp-sug-add{background:#00FF8815;border:1px solid #00FF8830;border-radius:4px;padding:2px 7px;color:#00FF8877;font-size:9px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .12s}
-.tp-sug-add:hover{background:#00FF8825;color:#00FF87}
-.tp-sug-add.added{color:#00FF87;background:#0d2b1e}
-.tp-foot{padding:7px 8px;border-top:1px solid #161616;flex-shrink:0}
-.tp-inv{display:flex;gap:5px;margin-bottom:5px}
-.tp-inv input{flex:1;background:#161616;border:1px solid #2a2a2a;border-radius:6px;padding:5px 8px;color:#ccc;font-size:11px;font-family:inherit;outline:none}
-.tp-inv input:focus{border-color:#00FF8744}
-.tp-inv input::placeholder{color:#333}
-.tp-inv-btn{background:#00FF8818;border:1px solid #00FF8833;border-radius:6px;padding:5px 9px;color:#00FF87;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap}
-.tp-copy-btn{width:100%;display:flex;align-items:center;justify-content:center;gap:4px;background:none;border:1px solid #1e1e1e;border-radius:6px;padding:5px;color:#444;font-size:10px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s}
-.tp-copy-btn:hover{border-color:#00FF8733;color:#00FF8777}
-.tp-copy-btn.copied{border-color:#00FF8766;color:#00FF87}
-
 /* ANIMATIONS */
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(1.3)}}
 @keyframes slideIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
@@ -3632,41 +3528,33 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 <div id="app">
   <!-- SIDEBAR -->
   <div id="sidebar">
-
-    <!-- Logo -->
     <div class="logo">
       <div class="logo-icon">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
       </div>
       <div>
         <div class="logo-text">MockAPI</div>
-        <div class="logo-sub">HTTP Inspector</div>
+        <div class="logo-sub">HTTP INSPECTOR</div>
       </div>
     </div>
 
     <!-- WORKSPACE SELECTOR -->
-    <div class="sb-ws-section" id="workspace-selector" style="display:none">
-      <div class="sb-ws-label">Workspace</div>
-      <div class="sb-ws-row" id="ws-current" onclick="toggleWsSwitcher(event)">
-        <div class="sb-ws-av" id="ws-icon-av">P</div>
-        <span class="sb-ws-name" id="ws-name">Pessoal</span>
-        <svg class="sb-ws-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        <!-- WS Switcher Dropdown -->
-        <div class="ws-switcher-dd" id="ws-switcher-dd" onclick="event.stopPropagation()">
-          <div class="ws-dd-search">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#555" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input placeholder="Buscar workspace..." oninput="filterWsDD(this.value)" id="ws-dd-search-input"/>
-          </div>
-          <div id="ws-dd-list"></div>
-          <div class="ws-dd-sep"></div>
-          <div class="ws-dd-item ws-dd-new" onclick="closeWsSwitcher();showWorkspaceModal('new')">+ Criar novo workspace</div>
+    <div id="workspace-selector" style="margin:8px 12px 4px;display:none">
+      <div style="font-size:9px;color:var(--text3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:5px">Workspace</div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <div id="ws-current" onclick="showWorkspaceModal()" style="flex:1;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:7px 10px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:border-color .2s;min-width:0" onmouseover="this.style.borderColor='var(--green)'" onmouseout="this.style.borderColor='var(--border2)'">
+          <span style="font-size:14px;flex-shrink:0" id="ws-icon">👤</span>
+          <span style="font-size:12px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1" id="ws-name">Personal</span>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;color:var(--text3)"><polyline points="6 9 12 15 18 9"/></svg>
         </div>
+        <button onclick="showWorkspaceModal('new')" title="Novo workspace" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:7px 8px;cursor:pointer;color:var(--text3);flex-shrink:0;transition:all .2s" onmouseover="this.style.color='var(--green)';this.style.borderColor='var(--green)'" onmouseout="this.style.color='var(--text3)';this.style.borderColor='var(--border2)'">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
       </div>
     </div>
 
-    <!-- Novo Endpoint -->
     <button class="new-ep-btn" id="add-endpoint-btn" onclick="showCreateModal()">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
       Novo Endpoint
     </button>
 
@@ -3677,21 +3565,17 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
       </div>
     </div>
 
-    <div class="sidebar-footer">
-      <!-- Connection status -->
-      <div style="display:flex;align-items:center;gap:7px">
-        <div class="status-dot" id="ws-dot" style="background:#FF4444;box-shadow:0 0 5px #FF4444"></div>
+    <div class="sidebar-footer" style="flex-direction:column;align-items:flex-start;gap:10px">
+      <div style="display:flex;align-items:center;gap:8px;width:100%">
+        <div class="status-dot" id="ws-dot" style="background:#FF4444;box-shadow:0 0 6px #FF4444"></div>
         <span class="mono" style="font-size:10px;color:var(--text3);flex:1" id="ws-status">Conectando...</span>
       </div>
-      <!-- Plan usage bars -->
-      <div id="plan-usage" style="width:100%"></div>
-      <!-- Quick links -->
-      <div style="display:flex;gap:5px;width:100%">
+      <div id="plan-usage" style="width:100%;padding-top:4px;border-top:1px solid #1a1a1a"></div>
+      <div style="display:flex;gap:6px;width:100%;padding-top:4px;border-top:1px solid #131313">
         <a href="/docs" target="_blank" style="font-size:10px;color:#333;text-decoration:none;flex:1;text-align:center;padding:4px 0;border-radius:4px;border:1px solid #1a1a1a;transition:all .2s" onmouseover="this.style.color='#00FF87';this.style.borderColor='#00FF8733'" onmouseout="this.style.color='#333';this.style.borderColor='#1a1a1a'">📄 Docs</a>
-        <button onclick="showTokenModal()" style="font-size:10px;color:#333;background:none;cursor:pointer;flex:1;text-align:center;padding:4px 0;border-radius:4px;border:1px solid #1a1a1a;transition:all .2s;font-family:inherit" onmouseover="this.style.color='#7DD3FC';this.style.borderColor='#7DD3FC33'" onmouseout="this.style.color='#333';this.style.borderColor='#1a1a1a'">🔑 Tokens</button>
-        <a href="/upgrade" style="font-size:10px;color:#333;text-decoration:none;flex:1;text-align:center;padding:4px 0;border-radius:4px;border:1px solid #1a1a1a;transition:all .2s" onmouseover="this.style.color='#ff8c00';this.style.borderColor='#ff8c0033'" onmouseout="this.style.color='#333';this.style.borderColor='#1a1a1a'">⚡ Planos</a>
+        <button onclick="showTokenModal()" style="font-size:10px;color:#333;background:none;cursor:pointer;flex:1;text-align:center;padding:4px 0;border-radius:4px;border:1px solid #1a1a1a;transition:all .2s" onmouseover="this.style.color='#7DD3FC';this.style.borderColor='#7DD3FC33'" onmouseout="this.style.color='#333';this.style.borderColor='#1a1a1a'">🔑 Tokens</button>
+        <a href="/upgrade" style="font-size:10px;color:#333;text-decoration:none;flex:1;text-align:center;padding:4px 0;border-radius:4px;border:1px solid #1a1a1a;transition:all .2s" id="upgrade-sidebar-link" onmouseover="this.style.color='#ff8c00';this.style.borderColor='#ff8c0033'" onmouseout="this.style.color='#333';this.style.borderColor='#1a1a1a'">⚡ Planos</a>
       </div>
-      <!-- User row with dropdown -->
       ${userBarHtml}
     </div>
   </div>
@@ -3716,9 +3600,6 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
             <span class="ep-title" id="hdr-name">–</span>
             <span class="badge badge-gray mono" id="hdr-id">–</span>
             <span class="badge badge-green mono" id="hdr-cors" style="display:none">CORS</span>
-            <span class="badge badge-time mono" id="hdr-time" style="display:none" onclick="toggleTimePanel()">
-              <span class="time-pulse"></span>+ TIME
-            </span>
           </div>
           <div class="url-row">
             <span class="ep-url" id="hdr-url">–</span>
@@ -3763,36 +3644,7 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
         </button>
       </div>
 
-      <div id="content" style="display:flex;flex:1;overflow:hidden">
-        <!-- TIME PANEL (right drawer) -->
-        <div id="time-panel">
-          <div class="tp-header">
-            <div class="tp-title" id="tp-title">TIME · —</div>
-            <div class="tp-sub" id="tp-sub">— membros</div>
-          </div>
-          <div class="tp-scroll" id="tp-scroll">
-            <div id="tp-members-online"></div>
-            <div id="tp-members-offline"></div>
-            <div class="tp-lbl" style="margin-top:6px">Sugestões da sua rede</div>
-            <div class="tp-sug" id="tp-suggestions">
-              <div style="font-size:10px;color:#333;text-align:center;padding:4px">Nenhuma sugestão</div>
-            </div>
-          </div>
-          <div class="tp-foot">
-            <div class="tp-inv">
-              <input placeholder="@github ou email" id="tp-invite-input" onkeydown="if(event.key===\'Enter\')tpInvite()"/>
-              <button class="tp-inv-btn" onclick="tpInvite()">Add</button>
-            </div>
-            <button class="tp-copy-btn" id="tp-copy-btn" onclick="tpCopyLink()">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-              Copiar link de convite
-            </button>
-          </div>
-        </div>
-
-        <!-- Main content tabs wrapper -->
-        <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
-
+      <div id="content">
         <!-- Requests tab -->
         <div id="tab-content-requests" style="display:flex;flex:1;overflow:hidden">
           <div id="feed">
@@ -3903,11 +3755,10 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
             <div id="crud-tables-list"></div>
           </div>
         </div>
-        </div><!-- end main tabs wrapper -->
-      </div><!-- end #content flex -->
-    </div><!-- end #main-view -->
-  </div><!-- end #main -->
-</div><!-- end #app -->
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- URL TESTER (floating) -->
 <div id="url-tester" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);width:calc(100% - 280px);max-width:620px;background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:14px 18px;z-index:500;box-shadow:0 8px 32px rgba(0,0,0,.6)">
@@ -4641,12 +4492,8 @@ async function loadWorkspaces() {
 function updateWorkspaceSelector() {
   const ws = wsState.workspaces.find(function(w) { return w.id === wsState.currentWsId; });
   if (!ws) return;
-  const displayName = ws.name.replace(' (pessoal)', '');
-  const initials    = displayName.slice(0,2).toUpperCase();
-  const avEl = document.getElementById('ws-icon-av');
-  const nmEl = document.getElementById('ws-name');
-  if (avEl) avEl.textContent = initials;
-  if (nmEl) nmEl.textContent = displayName;
+  document.getElementById('ws-icon').textContent = ws.name.includes('(pessoal)') ? '👤' : '🏢';
+  document.getElementById('ws-name').textContent = ws.name.replace(' (pessoal)', '');
 }
 
 function switchWorkspace(wsId) {
@@ -5189,7 +5036,6 @@ function showEmptyMain() {
 function showEndpointView() {
   document.getElementById('main-empty').style.display = 'none';
   document.getElementById('main-view').style.display = 'flex';
-  showTimeBadge(true);
 }
 
 function updateHeader() {
@@ -6142,162 +5988,6 @@ function createVersionedRule(fromPath, version) {
   }, 50);
 }
 
-
-// ── USER DROPDOWN ────────────────────────────────────────────────────────────
-function toggleUserDropdown(e) {
-  e.stopPropagation();
-  const dd = document.getElementById('user-dropdown');
-  if (!dd) return;
-  const isOpen = dd.style.display !== 'none';
-  dd.style.display = isOpen ? 'none' : 'block';
-}
-
-// Event delegation for user dropdown items (data-udd-nav / data-udd-action)
-document.addEventListener('click', function(e) {
-  const navItem = e.target.closest('[data-udd-nav]');
-  if (navItem) { window.location.href = navItem.dataset.uddNav; return; }
-  const actItem = e.target.closest('[data-udd-action]');
-  if (actItem) {
-    const act = actItem.dataset.uddAction;
-    if (act === 'workspaces') showWorkspaceModal();
-    else if (act === 'tokens') showTokenModal();
-    const dd = document.getElementById('user-dropdown');
-    if (dd) dd.style.display = 'none';
-    return;
-  }
-  // Close all dropdowns on outside click
-  const dd = document.getElementById('user-dropdown');
-  if (dd) dd.style.display = 'none';
-  closeWsSwitcher();
-});
-
-// ── WS SWITCHER DROPDOWN ──────────────────────────────────────────────────────
-function toggleWsSwitcher(e) {
-  e.stopPropagation();
-  const dd = document.getElementById('ws-switcher-dd');
-  if (!dd) return;
-  const isOpen = dd.classList.contains('open');
-  if (isOpen) { dd.classList.remove('open'); }
-  else {
-    dd.classList.add('open');
-    renderWsDDList();
-    setTimeout(function() {
-      const inp = document.getElementById('ws-dd-search-input');
-      if (inp) inp.focus();
-    }, 80);
-  }
-}
-function closeWsSwitcher() {
-  const dd = document.getElementById('ws-switcher-dd');
-  if (dd) dd.classList.remove('open');
-}
-function renderWsDDList(filter) {
-  const list = document.getElementById('ws-dd-list');
-  if (!list) return;
-  let wss = wsState.workspaces || [];
-  if (filter) wss = wss.filter(function(w) { return w.name.toLowerCase().includes(filter.toLowerCase()); });
-  list.innerHTML = wss.map(function(ws) {
-    const isPersonal = ws.name.includes('(pessoal)');
-    const displayName = ws.name.replace(' (pessoal)', '');
-    const isActive = ws.id === wsState.currentWsId;
-    const initials = displayName.slice(0,2).toUpperCase();
-    const planLabel = ws.role === 'owner' ? 'Pro' : ws.role;
-    const bgColor = isPersonal ? 'linear-gradient(135deg,#00FF87,#00aaff)' : 'linear-gradient(135deg,#4dabf7,#7c3aed)';
-    const textColor = '#000';
-    return '<div class="ws-dd-item' + (isActive ? ' ws-dd-active' : '') + '" onclick="selectWsFromDD('' + ws.id + '')">'
-      + '<div class="ws-dd-av" style="background:' + bgColor + ';color:' + textColor + '">' + initials + '</div>'
-      + '<div class="ws-dd-info"><div class="ws-dd-iname">' + esc(displayName) + '</div><div class="ws-dd-iplan">' + planLabel + '</div></div>'
-      + '</div>';
-  }).join('');
-}
-function filterWsDD(val) { renderWsDDList(val); }
-function selectWsFromDD(wsId) {
-  closeWsSwitcher();
-  switchWorkspace(wsId);
-}
-
-// ── TIME PANEL ────────────────────────────────────────────────────────────────
-var timePanelOpen = false;
-function toggleTimePanel() {
-  timePanelOpen = !timePanelOpen;
-  const panel = document.getElementById('time-panel');
-  const badge  = document.getElementById('hdr-time');
-  if (panel) panel.classList.toggle('open', timePanelOpen);
-  if (badge)  badge.style.background = timePanelOpen ? '#00FF8725' : '';
-  if (timePanelOpen) loadTimePanel();
-}
-async function loadTimePanel() {
-  const ep = state.endpoints[state.selectedEp];
-  if (!ep) return;
-  const wsId = ep.workspaceId || wsState.currentWsId;
-  const epName = ep.name || state.selectedEp;
-
-  document.getElementById('tp-title').textContent = 'TIME · ' + epName;
-
-  if (!wsId) {
-    document.getElementById('tp-sub').textContent = 'Sem workspace';
-    document.getElementById('tp-members-online').innerHTML = '';
-    document.getElementById('tp-members-offline').innerHTML = '';
-    return;
-  }
-
-  const data = await api('GET', '/api/workspaces/' + wsId);
-  if (!data || data.error) return;
-  const members = data.members || [];
-  const online  = members.filter(function(m) { return m.id === window.__currentUserId; });
-  const offline = members.filter(function(m) { return m.id !== window.__currentUserId; });
-
-  document.getElementById('tp-sub').textContent = members.length + ' membro(s)';
-
-  function memberRow(m, isOnline) {
-    const av = m.avatar
-      ? '<img src="' + m.avatar + '" style="width:28px;height:28px;border-radius:50%;flex-shrink:0;object-fit:cover"/>'
-      : '<div class="tp-mav" style="background:linear-gradient(135deg,#00FF87,#0099ff)">' + (m.login||'?').slice(0,2).toUpperCase() + '</div>';
-    const dotClass = isOnline ? 's-on' : 's-off';
-    const roleColor = m.role === 'owner' ? 'r-ow' : m.role === 'editor' ? 'r-ed' : 'r-vi';
-    return '<div class="tp-mrow"><div class="tp-mav-w">' + av + '<div class="tp-sdot ' + dotClass + '"></div></div>'
-      + '<div class="tp-minfo"><div class="tp-mname">@' + esc(m.login||'?') + '</div><div class="tp-mrole ' + roleColor + '">' + (m.role||'') + '</div></div></div>';
-  }
-
-  const onlineHTML  = online.length  ? '<div class="tp-lbl">Online</div>' + online.map(function(m){ return memberRow(m,true); }).join('') : '';
-  const offlineHTML = offline.length ? '<div class="tp-lbl">Offline</div>' + offline.map(function(m){ return memberRow(m,false); }).join('') : '';
-  document.getElementById('tp-members-online').innerHTML  = onlineHTML;
-  document.getElementById('tp-members-offline').innerHTML = offlineHTML;
-
-  // Invite link
-  const inviteBase = window.location.origin + '/invite/' + wsId;
-  document.getElementById('tp-copy-btn').dataset.link = inviteBase;
-}
-function tpInvite() {
-  const val   = (document.getElementById('tp-invite-input').value || '').trim();
-  const wsId  = wsState.currentWsId;
-  if (!val || !wsId) return;
-  api('POST', '/api/workspaces/' + wsId + '/invite', { github_login: val, role: 'editor' })
-    .then(function(r) {
-      if (r && r.error) { toast(r.error, 'error'); return; }
-      toast('Convite enviado para @' + val, 'success');
-      document.getElementById('tp-invite-input').value = '';
-      loadTimePanel();
-    });
-}
-function tpCopyLink() {
-  const btn  = document.getElementById('tp-copy-btn');
-  const link = btn.dataset.link || window.location.origin;
-  navigator.clipboard.writeText(link).then(function() {
-    btn.classList.add('copied');
-    btn.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Copiado!';
-    setTimeout(function() {
-      btn.classList.remove('copied');
-      btn.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> Copiar link de convite';
-    }, 2000);
-  });
-}
-
-// ── SHOW TIME BADGE when endpoint selected ────────────────────────────────────
-function showTimeBadge(show) {
-  const badge = document.getElementById('hdr-time');
-  if (badge) badge.style.display = show ? 'flex' : 'none';
-}
 
 async function init() {
   wsBindStaticButtons();
