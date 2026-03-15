@@ -3731,7 +3731,7 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
           </div>
           <div id="ws-dd-list"></div>
           <div class="ws-dd-sep"></div>
-          <div class="ws-dd-item ws-dd-new" onclick="event.stopPropagation();closeWsSwitcher();showWorkspaceModal('new')">+ Criar novo workspace</div>
+          <div class="ws-dd-item ws-dd-new">+ Criar novo workspace</div>
         </div>
       </div>
     </div>
@@ -6331,32 +6331,20 @@ function closeWsSwitcher() {
 function renderWsDDList(filter) {
   const list = document.getElementById('ws-dd-list');
   if (!list) return;
-  // Only show workspaces where visible !== 0
+  // Only show workspaces where visible !== 0 (undefined/null/1 = visible)
   let wss = (wsState.workspaces || []).filter(function(w) { return w.visible !== 0 && w.visible !== false; });
   if (filter) wss = wss.filter(function(w) { return w.name.toLowerCase().includes(filter.toLowerCase()); });
   if (!wss.length) { list.innerHTML = '<div style="font-size:11px;color:#444;padding:6px 10px">Nenhum workspace ativo</div>'; return; }
-  // Get current user plan from the plan badge in sidebar (injected by server)
-  const userPlanEl = document.querySelector('.plan-tag, [data-user-plan]');
-  const userPlan = (userPlanEl ? userPlanEl.textContent : 'FREE').trim().toUpperCase();
   list.innerHTML = wss.map(function(ws) {
     const isPersonal = ws.name.includes('(pessoal)');
     const displayName = ws.name.replace(' (pessoal)', '');
     const isCurrent = ws.id === wsState.currentWsId;
     const initials = displayName.slice(0,2).toUpperCase();
-    // Show actual user plan for own workspaces, role for shared ones
-    const planLabel = ws.role === 'owner' ? userPlan : (ws.role || '');
-    const planColor = planLabel === 'PRO' ? '#00FF87' : planLabel === 'TEAM' ? '#4dabf7' : planLabel === 'FREE' ? '#fca130' : '#888';
-    const bgColor = isPersonal
-      ? 'linear-gradient(135deg,#00FF87,#00aaff)'
-      : 'linear-gradient(135deg,#4dabf7,#7c3aed)';
-    const activeStyle = isCurrent ? ' ws-dd-active' : '';
-    return '<div class="ws-dd-item' + activeStyle + '" data-wsid="' + ws.id + '" style="cursor:pointer"'
-      + ' onclick="event.stopPropagation();selectWsFromDD(&apos;' + ws.id + '&apos;)">'
+    const planLabel = ws.role === 'owner' ? 'Pro' : (ws.role || '');
+    const bgColor = isPersonal ? 'linear-gradient(135deg,#00FF87,#00aaff)' : 'linear-gradient(135deg,#4dabf7,#7c3aed)';
+    return '<div class="ws-dd-item' + (isCurrent ? ' ws-dd-active' : '') + '" data-wsid="' + ws.id + '">'
       + '<div class="ws-dd-av" style="background:' + bgColor + ';color:#000">' + initials + '</div>'
-      + '<div class="ws-dd-info">'
-        + '<div class="ws-dd-iname">' + esc(displayName) + '</div>'
-        + '<div class="ws-dd-iplan" style="color:' + planColor + '">' + planLabel + '</div>'
-      + '</div>'
+      + '<div class="ws-dd-info"><div class="ws-dd-iname">' + esc(displayName) + '</div><div class="ws-dd-iplan">' + planLabel + '</div></div>'
       + '</div>';
   }).join('');
 }
