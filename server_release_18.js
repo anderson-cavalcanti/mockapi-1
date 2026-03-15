@@ -142,18 +142,56 @@ const AUTH_ENABLED         = !!GITHUB_CLIENT_ID;
 function getPlanLimits(plan) {
   const cfg = db.getPlanConfig(plan || 'free');
   return {
-    endpoints: cfg.ep_limit    >= 999999 ? Infinity : cfg.ep_limit,
-    reqPerDay: cfg.req_per_day >= 999999999 ? Infinity : cfg.req_per_day,
-    label: cfg.label,
-    enabled: !!cfg.enabled,
-    priceBrl: cfg.price_brl || 0,
+    endpoints:   cfg.ep_limit     >= 999999    ? Infinity : cfg.ep_limit,
+    reqPerDay:   cfg.req_per_day  >= 999999999 ? Infinity : cfg.req_per_day,
+    memberLimit: cfg.member_limit >= 999999    ? Infinity : (cfg.member_limit ?? 1),
+    label:       cfg.label,
+    enabled:     !!cfg.enabled,
+    priceBrl:    cfg.price_brl || 0,
   };
 }
-function checkEndpointLimit(user) {
-  if (!user) return null; // no auth = no limit
+function checkEndpointLimit(user, workspaceId) {
+  if (!user) return null;
+  // For team workspaces, count against workspace owner's plan
+  if (workspaceId) {
+    const ws = db.getWorkspace(workspaceId);
+    if (ws) {
+      const ownerId = ws.owner_id;
+      const owner = ownerId === user.id ? user : db.getUserById(ownerId);
+      if (owner) {
+        const limits = getPlanLimits(owner.plan);
+        const count = db.countWorkspaceEndpoints(workspaceId);
+        if (count >= limits.endpoints) return { error: 'endpoint_limit', plan: owner.plan, limit: limits.endpoints, count };
+        return null;
+      }
+    }
+  }
+  // Personal workspace: count user's own endpoints
   const limits = getPlanLimits(user.plan);
   const count = db.countUserEndpoints(user.id);
   if (count >= limits.endpoints) return { error: 'endpoint_limit', plan: user.plan, limit: limits.endpoints, count };
+  return null;
+}
+function checkMemberLimit(workspaceId) {
+  const ws = db.getWorkspace(workspaceId);
+  if (!ws) return { error: 'Workspace não encontrado.' };
+  const owner = db.getUserById(ws.owner_id);
+  if (!owner) return null;
+  const limits = getPlanLimits(owner.plan);
+  if (limits.memberLimit === Infinity) return null;
+  // Count non-owner members only — owner doesn't consume a seat
+  const allMembers = db.getWorkspaceMembers(workspaceId);
+  const nonOwnerCount = allMembers.filter(function(m) { return m.id !== ws.owner_id; }).length;
+  if (nonOwnerCount >= limits.memberLimit) {
+    const planLabel = limits.label || owner.plan;
+    return {
+      error: 'member_limit',
+      plan: owner.plan,
+      limit: limits.memberLimit,
+      count: nonOwnerCount,
+      message: `Limite de ${limits.memberLimit} membro(s) atingido no plano ${planLabel}. Faça upgrade para adicionar mais membros.`
+    };
+  }
   return null;
 }
 function checkDailyLimit(user) {
@@ -173,6 +211,25 @@ function parseCookies(req) {
     list[k.trim()] = decodeURIComponent(v.join('='));
   });
   return list;
+}
+
+// Returns the user's role in the workspace that owns this endpoint, or null if no workspace
+function getEndpointRole(user, epId) {
+  if (!user) return null;
+  const ep = db.getEndpoint(epId);
+  if (!ep || !ep.workspaceId) return 'owner'; // no workspace = user owns it
+  const membership = db.getWorkspaceMember(ep.workspaceId, user.id);
+  return membership ? membership.role : null;
+}
+// Returns true if user can write (owner or editor) to this endpoint
+function canWrite(user, epId) {
+  const role = getEndpointRole(user, epId);
+  return role === 'owner' || role === 'editor';
+}
+// Returns true if user can delete (owner only)
+function canDelete(user, epId) {
+  const role = getEndpointRole(user, epId);
+  return role === 'owner';
 }
 
 function getSessionUser(req) {
@@ -466,9 +523,10 @@ async function handleRequest(req, res) {
       const isPopular = p.plan === 'pro';
       const color = planColors[p.plan] || '#00FF87';
       const inf = 999999;
-      const epLabel  = p.ep_limit  >= inf ? 'Ilimitado' : p.ep_limit.toLocaleString('pt-BR');
-      const reqLabel = p.req_per_day >= 999999999 ? 'Ilimitado' : p.req_per_day.toLocaleString('pt-BR');
-      const price    = p.price_brl || 0;
+      const epLabel     = p.ep_limit     >= inf       ? 'Ilimitado' : p.ep_limit.toLocaleString('pt-BR');
+      const reqLabel    = p.req_per_day  >= 999999999 ? 'Ilimitado' : p.req_per_day.toLocaleString('pt-BR');
+      const memberLabel = (p.member_limit ?? 1) >= inf ? 'Ilimitado' : (p.member_limit ?? 1) + ' membro(s)';
+      const price       = p.price_brl || 0;
       return `<div class="plan${isPopular ? ' popular' : ''}" style="${isCurrent ? 'opacity:.7' : ''}">
         ${isPopular ? '<div class="plan-badge">MAIS POPULAR</div>' : ''}
         <div class="plan-name">${p.label}</div>
@@ -477,6 +535,7 @@ async function handleRequest(req, res) {
         <ul class="plan-features">
           <li><span class="check">✓</span> <strong>${epLabel} endpoints</strong></li>
           <li><span class="check">✓</span> <strong>${reqLabel} req/dia</strong></li>
+          ${p.plan === 'free' ? '<li><span class="x">✗</span> Sem workspace de time</li>' : `<li><span class="check">✓</span> <strong>${memberLabel} no workspace</strong></li>`}
           <li><span class="check">✓</span> CRUD + Faker + OpenAPI</li>
           ${p.plan !== 'free' ? '<li><span class="check">✓</span> Suporte prioritário</li>' : ''}
           ${p.plan === 'team' || p.plan === 'enterprise' ? '<li><span class="check">✓</span> SLA e onboarding</li>' : ''}
@@ -525,6 +584,7 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
 .plan-features li{font-size:13px;color:#888;padding:6px 0;border-bottom:1px solid #111;display:flex;align-items:center;gap:8px}
 .plan-features li:last-child{border-bottom:none}
 .plan-features .check{color:var(--green);font-size:14px}
+.plan-features .x{color:#444;font-size:14px}
 .btn{display:block;text-align:center;padding:12px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:all .2s;text-decoration:none}
 .btn-outline{border:1px solid #333;color:#888}
 </style>
@@ -796,26 +856,32 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
   if (method === 'POST' && pathname === '/api/endpoints') {
     const user = AUTH_ENABLED ? requireAuth(req, res) : null;
     if (AUTH_ENABLED && !user) return;
-    // Check endpoint limit (admins bypass)
-    if (!user?.isAdmin) {
-      const epLimitErr = checkEndpointLimit(user);
-      if (epLimitErr) return json(res, epLimitErr, 403);
-    }
     const body = await readBody(req);
     let data = {}; try { data = JSON.parse(body); } catch(_) {}
     const id = genId();
-    // Resolve workspace: use provided workspaceId or fall back to personal workspace
+    // Resolve workspace
     let workspaceId = data.workspaceId || null;
     if (!workspaceId && user) {
       const personal = db.ensurePersonalWorkspace(user.id, user.login);
       workspaceId = personal?.id || null;
+    }
+    // Bug 2d: viewer cannot create endpoints
+    if (AUTH_ENABLED && workspaceId && !user?.isAdmin) {
+      const membership = db.getWorkspaceMember(workspaceId, user.id);
+      if (membership && membership.role === 'viewer') {
+        return json(res, { error: 'Sem permissão: role viewer não pode criar endpoints.' }, 403);
+      }
+    }
+    // Bug 3: check limit using workspace owner's plan for team workspaces
+    if (!user?.isAdmin) {
+      const epLimitErr = checkEndpointLimit(user, workspaceId);
+      if (epLimitErr) return json(res, epLimitErr, 403);
     }
     const ep = { id, userId: user ? user.id : null, workspaceId,
                  name: data.name || `Endpoint ${id}`, path: data.path || `/${id}`,
                  corsEnabled: data.corsEnabled !== false, globalDelay: parseInt(data.globalDelay)||0,
                  rateLimit: parseInt(data.rateLimit)||100, requestCount: 0, createdAt: new Date().toISOString() };
     db.saveEndpoint(ep);
-    // Auto-init CRUD table when crud:true (SDK usage)
     if (data.crud !== false) {
       const crudPath = '/' + (data.name || id).toLowerCase().replace(/\s+/g, '-');
       const tableKey = id + crudPath;
@@ -860,6 +926,8 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
   const rulesMatch = pathname.match(/^\/api\/rules\/([A-Z0-9]+)$/);
   if (method === 'GET' && rulesMatch) return json(res, db.getRules(rulesMatch[1]));
   if (method === 'POST' && rulesMatch) {
+    const user = getSessionUser(req) || getTokenUser(req);
+    if (AUTH_ENABLED && !canWrite(user, rulesMatch[1])) return json(res, { error: 'Sem permissão: role viewer não pode criar rules.' }, 403);
     const body = await readBody(req);
     let data = {}; try { data = JSON.parse(body); } catch(_) {}
     const rule = { id: genId(), endpointId: rulesMatch[1], ...data, createdAt: new Date().toISOString() };
@@ -869,11 +937,15 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
   }
   const delRuleMatch = pathname.match(/^\/api\/rules\/([A-Z0-9]+)\/([A-Z0-9]+)$/);
   if (method === 'DELETE' && delRuleMatch) {
+    const user = getSessionUser(req) || getTokenUser(req);
+    if (AUTH_ENABLED && !canDelete(user, delRuleMatch[1])) return json(res, { error: 'Sem permissão: apenas owner pode deletar rules.' }, 403);
     db.deleteRule(delRuleMatch[2]);
     broadcast(delRuleMatch[1], 'rule_deleted', { id: delRuleMatch[2] });
     return json(res, { ok: true });
   }
   if (method === 'PATCH' && delRuleMatch) {
+    const user = getSessionUser(req) || getTokenUser(req);
+    if (AUTH_ENABLED && !canWrite(user, delRuleMatch[1])) return json(res, { error: 'Sem permissão.' }, 403);
     const body = await readBody(req);
     let data = {}; try { data = JSON.parse(body); } catch(_) {}
     const existing = db.getRule(delRuleMatch[2]);
@@ -890,6 +962,8 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
     const epId = crudMgmtMatch[1];
     if (method === 'GET') return json(res, db.getCrudTablesForEndpoint(epId));
     if (method === 'POST') {
+      const user = getSessionUser(req) || getTokenUser(req);
+      if (AUTH_ENABLED && !canWrite(user, epId)) return json(res, { error: 'Sem permissão: role viewer não pode criar/editar tabelas.' }, 403);
       const body = await readBody(req);
       let data = {}; try { data = JSON.parse(body); } catch(_) {}
       const p = data.path?.startsWith('/') ? data.path : '/' + (data.path || 'items');
@@ -908,6 +982,8 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
   }
   const crudDeleteMatch = pathname.match(/^\/api\/crud\/([A-Z0-9]+)\/(.+)$/);
   if (method === 'DELETE' && crudDeleteMatch) {
+    const user = getSessionUser(req) || getTokenUser(req);
+    if (AUTH_ENABLED && !canDelete(user, crudDeleteMatch[1])) return json(res, { error: 'Sem permissão: apenas owner pode deletar tabelas.' }, 403);
     const key = decodeURIComponent(crudDeleteMatch[2]);
     db.deleteCrudTable(key);
     return json(res, { ok: true });
@@ -947,6 +1023,8 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
   const fakerMatch = pathname.match(/^\/api\/faker\/([A-Z0-9]+)\/(.+)$/);
   if (method === 'POST' && fakerMatch) {
     const epId = fakerMatch[1];
+    const user = getSessionUser(req) || getTokenUser(req);
+    if (AUTH_ENABLED && !canWrite(user, epId)) return json(res, { error: 'Sem permissão: role viewer não pode gerar dados.' }, 403);
     const key = decodeURIComponent(fakerMatch[2]);
     const body = await readBody(req);
     let data = {}; try { data = JSON.parse(body); } catch(_) {}
@@ -1038,7 +1116,10 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
     if (method === 'GET') {
       const members = db.getWorkspaceMembers(wsId);
       const pending = db.getPendingInvitesForWorkspace(wsId);
-      return json(res, { ...ws, members, pending, yourRole: membership?.role || 'viewer' });
+      const owner = db.getUserById(ws.owner_id);
+      const limits = owner ? getPlanLimits(owner.plan) : null;
+      const memberLimit = limits ? (limits.memberLimit === Infinity ? null : limits.memberLimit) : 1;
+      return json(res, { ...ws, members, pending, yourRole: membership?.role || 'viewer', memberLimit, ownerPlan: owner?.plan });
     }
     if (method === 'PATCH') {
       if (membership?.role !== 'owner' && !user.isAdmin) return json(res, { error: 'Only owner can rename' }, 403);
@@ -1074,11 +1155,16 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
     if (!ws) return json(res, { error: 'Workspace not found' }, 404);
     const membership = db.getWorkspaceMember(wsId, user.id);
     if (membership?.role !== 'owner' && !user.isAdmin) return json(res, { error: 'Only owner can invite' }, 403);
+
+    // Check seat limit before inviting
+    const memberLimitErr = checkMemberLimit(wsId);
+    if (memberLimitErr) return json(res, memberLimitErr, 403);
+
     const body = await readBody(req); let data = {}; try { data = JSON.parse(body); } catch(_) {}
     const login = data.github_login?.trim().toLowerCase();
     if (!login) return json(res, { error: 'github_login required' }, 400);
     // Check if user already exists in system
-    const invitee = db.raw.prepare(`SELECT * FROM users WHERE LOWER(login)=?`).get(login);
+    const invitee = db.getUserByLogin(login);
     if (invitee) {
       const alreadyMember = db.getWorkspaceMember(wsId, invitee.id);
       if (alreadyMember) return json(res, { error: login + ' já é membro' }, 409);
@@ -1109,6 +1195,8 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
     }
     if (method === 'DELETE') {
       db.removeWorkspaceMember(wsId, targetUid);
+      // Notify all clients — the removed user will detect it and reset their view
+      broadcast(null, 'workspace_member_removed', { workspaceId: wsId, userId: targetUid });
       return json(res, { ok: true });
     }
   }
@@ -1127,7 +1215,7 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
   const acceptInviteMatch = pathname.match(/^\/api\/workspaces\/accept-invite\/([A-Z0-9]+)$/);
   if (method === 'POST' && acceptInviteMatch) {
     const user = requireAuth(req, res); if (!user) return;
-    const invite = db.raw.prepare(`SELECT * FROM workspace_invites WHERE id=?`).get(acceptInviteMatch[1]);
+    const invite = db.getInviteById(acceptInviteMatch[1]);
     if (!invite) return json(res, { error: 'Invite not found or expired' }, 404);
     if (invite.github_login.toLowerCase() !== user.login.toLowerCase()) return json(res, { error: 'This invite is for @' + invite.github_login }, 403);
     db.addWorkspaceMember(invite.workspace_id, user.id, 'editor', invite.invited_by);
@@ -1796,6 +1884,8 @@ async function loadPlans() {
         + '<input class="search-input" style="width:100%" type="number" value="'+(p.ep_limit>=inf?'':p.ep_limit)+'" placeholder="999999 = ilimitado" data-plan="'+p.plan+'" data-field="ep_limit" onchange="patchPlan(this)">'
         + '<label style="font-size:12px;color:var(--text3)">Req/dia</label>'
         + '<input class="search-input" style="width:100%" type="number" value="'+(p.req_per_day>=999999999?'':p.req_per_day)+'" placeholder="999999999 = ilimitado" data-plan="'+p.plan+'" data-field="req_per_day" onchange="patchPlan(this)">'
+        + '<label style="font-size:12px;color:var(--text3)">Membros no workspace</label>'
+        + '<input class="search-input" style="width:100%" type="number" value="'+(p.member_limit>=999999?'':p.member_limit)+'" placeholder="999999 = ilimitado" data-plan="'+p.plan+'" data-field="member_limit" onchange="patchPlan(this)">'
         + '<label style="font-size:12px;color:var(--text3)">Preço (R$)</label>'
         + '<input class="search-input" style="width:100%" type="number" value="'+p.price_brl+'" data-plan="'+p.plan+'" data-field="price_brl" onchange="patchPlan(this)">'
         + '</div></div>';
@@ -3373,7 +3463,7 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
       </div>
     </div>
 
-    <button class="new-ep-btn" onclick="showCreateModal()">
+    <button class="new-ep-btn" id="add-endpoint-btn" onclick="showCreateModal()">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
       Novo Endpoint
     </button>
@@ -3654,6 +3744,7 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
             <!-- invite -->
             <div id="ws-invite-box">
               <div class="section-label">Convidar membro</div>
+              <div id="ws-seat-status" style="margin:6px 0;font-size:11px;color:var(--text3)"></div>
               <div style="display:flex;gap:6px;margin-top:6px">
                 <input id="ws-invite-login" class="form-input" placeholder="GitHub username" style="flex:1"/>
                 <select id="ws-invite-role" class="form-input" style="width:88px;flex-shrink:0">
@@ -3809,7 +3900,7 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 <div id="crud-modal" style="display:none" class="modal-overlay">
   <div class="modal" style="width:540px">
     <div class="modal-row">
-      <h2 class="modal-title" style="margin:0">Nova Tabela CRUD</h2>
+      <h2 class="modal-title" id="crud-modal-title" style="margin:0">Nova Tabela CRUD</h2>
       <button onclick="hideCrudModal()" style="background:none;border:none;color:var(--text3)">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
@@ -3832,7 +3923,7 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
     </div>
     <div class="btn-row">
       <button class="btn-cancel" onclick="hideCrudModal()">Cancelar</button>
-      <button class="btn-primary" onclick="createCrudTable()">Criar Tabela</button>
+      <button class="btn-primary" id="crud-modal-save-btn" onclick="createCrudTable()">Criar Tabela</button>
     </div>
   </div>
 </div>
@@ -3894,6 +3985,7 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 <script>
 // ── STATE ────────────────────────────────────────────────────────────────────
 const baseUrl = '${baseUrl}';  // injected by server — works on localhost and production
+window.__currentUserId = '${currentUser ? currentUser.id : ''}';  // for WS membership checks
 const state = {
   endpoints: {},
   requests: {},      // endpointId -> []
@@ -4048,6 +4140,19 @@ function handleWsEvent(msg) {
       state.crudTables[payload.key] = { ...payload };
       if (state.selectedEp) renderCrudTables();
       break;
+    case 'workspace_member_removed':
+      // If this client's user was removed, fall back to personal workspace
+      if (payload.workspaceId === wsState.currentWsId && window.__currentUserId && payload.userId === window.__currentUserId) {
+        toast('Você foi removido deste workspace.', 'info');
+        const personal = wsState.workspaces.find(function(w) { return w.role === 'owner' && w.name.includes('(pessoal)'); });
+        if (personal) {
+          switchWorkspace(personal.id);
+        } else {
+          // Reload page to force clean state
+          location.reload();
+        }
+      }
+      break;
   }
 }
 
@@ -4152,7 +4257,21 @@ async function deleteEndpoint(id, e) {
 }
 
 // ── WORKSPACE MODAL ────────────────────────────────────────────────────────────
-const wsState = { workspaces: [], currentWsId: null, managingWsId: null };
+const wsState = { workspaces: [], currentWsId: null, managingWsId: null, currentRole: 'owner' };
+
+function isViewer() { return wsState.currentRole === 'viewer'; }
+
+function applyRoleUI() {
+  const viewer = isViewer();
+  // Hide write-only controls for viewers
+  [
+    'add-endpoint-btn',   // "+ Novo Endpoint" button
+    'new-endpoint-fab',   // FAB if exists
+  ].forEach(function(id) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = viewer ? 'none' : '';
+  });
+}
 
 // Wire up static buttons once DOM is ready
 function wsBindStaticButtons() {
@@ -4192,7 +4311,10 @@ function updateWorkspaceSelector() {
 
 function switchWorkspace(wsId) {
   wsState.currentWsId = wsId;
+  const ws = wsState.workspaces.find(function(w) { return w.id === wsId; });
+  wsState.currentRole = ws ? ws.role : 'owner';
   updateWorkspaceSelector();
+  applyRoleUI();
   closeWorkspaceModal();
   loadEndpointsForWorkspace(wsId);
 }
@@ -4204,7 +4326,7 @@ async function loadEndpointsForWorkspace(wsId) {
     eps.forEach(function(ep) { state.endpoints[ep.id] = ep; state.requests[ep.id] = []; state.rules[ep.id] = []; });
     renderEndpointList();
     if (eps.length > 0) selectEndpoint(eps[0].id);
-    else { state.selectedEp = null; document.getElementById('main-content').style.display = 'none'; document.getElementById('empty-state').style.display = 'flex'; }
+    else { state.selectedEp = null; document.getElementById('main-view').style.display = 'none'; document.getElementById('main-empty').style.display = 'flex'; }
   }
 }
 
@@ -4279,9 +4401,34 @@ async function openManage(wsId) {
   document.getElementById('ws-invite-box').style.display = isOwner ? 'block' : 'none';
   document.getElementById('ws-delete-box').style.display = (isOwner && !isPersonal) ? 'block' : 'none';
 
-  // Members
+  // Members — declare early so seat status can use it
   const members = data.members || [];
   document.getElementById('ws-member-count').textContent = '(' + members.length + ')';
+
+  // Seat status
+  if (isOwner && data.memberLimit !== undefined) {
+    const seatEl = document.getElementById('ws-seat-status');
+    if (seatEl) {
+      // Count non-owner members only (owner doesn't consume a seat)
+      const nonOwnerCount = members.filter(function(m) { return m.role !== 'owner'; }).length;
+      const limit = data.memberLimit;
+      const atLimit = limit !== null && nonOwnerCount >= limit;
+      if (limit === null || limit >= 999999) {
+        seatEl.textContent = nonOwnerCount + ' membro(s) · ilimitado';
+        seatEl.style.color = 'var(--text3)';
+      } else {
+        seatEl.innerHTML = nonOwnerCount + ' / ' + limit + ' membros inclusos no plano'
+          + (atLimit ? ' · <a href="/upgrade" style="color:var(--green);text-decoration:none;font-weight:600">Fazer upgrade ↗</a>' : '');
+        seatEl.style.color = atLimit ? '#FFB347' : 'var(--text3)';
+        const inviteBtn = document.getElementById('ws-invite-btn');
+        if (inviteBtn) {
+          inviteBtn.disabled = atLimit;
+          inviteBtn.style.opacity = atLimit ? '0.4' : '1';
+          inviteBtn.title = atLimit ? 'Limite de membros atingido. Faça upgrade.' : '';
+        }
+      }
+    }
+  }
 
   if (members.length === 0) {
     document.getElementById('ws-members-list').innerHTML = '<div style="color:var(--text3);font-size:12px;padding:4px 0">Nenhum membro.</div>';
@@ -4905,18 +5052,21 @@ function switchTab(tab) {
 
 // ── CRUD MANAGEMENT ───────────────────────────────────────────────────────────
 function showCrudModal() {
+  state._editingCrudKey = null;
   document.getElementById('crud-path').value = '';
   document.getElementById('crud-idfield').value = 'id';
   document.getElementById('crud-path-preview').textContent = '...';
   document.getElementById('crud-routes-preview').innerHTML = '';
+  document.getElementById('crud-modal-title').textContent = 'Nova Tabela CRUD';
+  document.getElementById('crud-modal-save-btn').textContent = 'Criar Tabela';
   document.getElementById('crud-modal').style.display = 'flex';
-  setTimeout(() => document.getElementById('crud-path').focus(), 50);
+  setTimeout(function() { document.getElementById('crud-path').focus(); }, 50);
 }
 function hideCrudModal() {
   document.getElementById('crud-modal').style.display = 'none';
   state._editingCrudKey = null;
-  const title = document.querySelector('#crud-modal .modal-title');
-  if (title) title.textContent = 'Nova Tabela CRUD';
+  document.getElementById('crud-modal-title').textContent = 'Nova Tabela CRUD';
+  document.getElementById('crud-modal-save-btn').textContent = 'Criar Tabela';
 }
 
 document.addEventListener('input', e => {
@@ -4946,31 +5096,29 @@ function updateCrudPreview() {
 async function createCrudTable() {
   let path = document.getElementById('crud-path').value.trim();
   if (!path) { toast('Digite o caminho da coleção.', 'error'); return; }
-  // Auto-fix: ensure starts with /
   if (!path.startsWith('/')) path = '/' + path;
   const idField = document.getElementById('crud-idfield').value.trim() || 'id';
 
   if (state._editingCrudKey) {
-    // EDIT MODE: delete old, create new
     const oldKey = state._editingCrudKey;
     const oldTbl = state.crudTables[oldKey];
     if (oldTbl && oldTbl.path !== path) {
-      // Migrate rows to new path
+      // Path changed: migrate rows to new table
       const rows = await api('GET', '/api/crud/' + state.selectedEp + '/' + encodeURIComponent(oldKey) + '/rows');
       await api('DELETE', '/api/crud/' + state.selectedEp + '/' + encodeURIComponent(oldKey));
       delete state.crudTables[oldKey];
-      const result = await api('POST', '/api/crud/' + state.selectedEp, { path, idField });
+      await api('POST', '/api/crud/' + state.selectedEp, { path, idField });
       // Re-insert rows
-      const mockBase = 'http://localhost:' + location.port + '/mock/' + state.selectedEp;
-      for (const row of rows) {
-        await fetch(mockBase + path, {
+      const base = location.origin + '/mock/' + state.selectedEp;
+      for (const row of (rows || [])) {
+        await fetch(base + path, {
           method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(row)
         });
       }
-      toast('Tabela renomeada para "' + path + '" · ' + rows.length + ' registros migrados.', 'success');
+      toast('Tabela renomeada para "' + path + '" · ' + (rows||[]).length + ' registros migrados.', 'success');
     } else {
-      // Just update idField
-      await api('POST', '/api/crud/' + state.selectedEp, { path, idField });
+      // Same path, just update idField — use saveCrudTable via POST which is INSERT OR REPLACE
+      await api('POST', '/api/crud/' + state.selectedEp, { path: oldTbl ? oldTbl.path : path, idField });
       toast('Tabela atualizada.', 'success');
     }
     state._editingCrudKey = null;
@@ -4981,7 +5129,7 @@ async function createCrudTable() {
 
   hideCrudModal();
   const tables = await api('GET', '/api/crud/' + state.selectedEp);
-  tables.forEach(t => { state.crudTables[t.key] = t; });
+  if (Array.isArray(tables)) tables.forEach(function(t) { state.crudTables[t.key] = t; });
   renderCrudTables();
 }
 
@@ -5016,14 +5164,15 @@ function toggleCurlPanel(idx) {
 
 function editCrudTable(key) {
   const tbl = state.crudTables[key];
-  if (!tbl) return;
+  if (!tbl) { toast('Tabela não encontrada no estado local. Recarregue a aba CRUD.', 'error'); return; }
   document.getElementById('crud-path').value = tbl.path;
   document.getElementById('crud-idfield').value = tbl.idField || 'id';
   state._editingCrudKey = key;
-  const title = document.querySelector('#crud-modal .modal-title');
-  if (title) title.textContent = 'Editar Tabela CRUD';
+  document.getElementById('crud-modal-title').textContent = 'Editar Tabela CRUD';
+  document.getElementById('crud-modal-save-btn').textContent = 'Salvar Alterações';
   updateCrudPreview();
   document.getElementById('crud-modal').style.display = 'flex';
+  setTimeout(function() { document.getElementById('crud-path').focus(); }, 50);
 }
 
 function renderCrudTables() {
@@ -5083,33 +5232,33 @@ function renderCrudTables() {
           </div>
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
-          <button onclick="editCrudTable('\${esc(t.key)}')"
+          \${isViewer() ? '' : \`<button onclick="editCrudTable('\${esc(t.key)}')"
             style="background:#161616;border:1px solid #2a2a2a;border-radius:7px;padding:6px 12px;color:#888;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .2s"
             onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             Editar
-          </button>
+          </button>\`}
           <button onclick="toggleCurlPanel(\${idx})"
             style="background:#161616;border:1px solid #2a2a2a;border-radius:7px;padding:6px 12px;color:#888;font-size:11px;cursor:pointer;font-family:'Space Mono',monospace;display:flex;align-items:center;gap:5px;transition:all .2s"
             onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             cURL
           </button>
-          <button onclick="showFakerModal('\${esc(t.key)}')"
+          \${isViewer() ? '' : \`<button onclick="showFakerModal('\${esc(t.key)}')"
             style="background:#00FF8712;border:1px solid #00FF8733;border-radius:7px;padding:6px 12px;color:var(--green);font-size:11px;cursor:pointer;font-weight:700;transition:all .2s"
             onmouseover="this.style.background='#00FF8720'" onmouseout="this.style.background='#00FF8712'" title="Gerar dados fake">
             ✦ Faker
-          </button>
+          </button>\`}
           <button onclick="openCrudData('\${esc(t.key)}')"
             style="background:#161616;border:1px solid #2a2a2a;border-radius:7px;padding:6px 12px;color:#888;font-size:12px;cursor:pointer;transition:all .2s"
             onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">
             Ver Dados
           </button>
-          <button onclick="deleteCrudTable('\${esc(t.key)}')"
+          \${isViewer() ? '' : \`<button onclick="deleteCrudTable('\${esc(t.key)}')"
             style="background:none;border:none;color:#333;cursor:pointer;padding:6px;transition:color .2s"
             onmouseover="this.style.color='#FF4444'" onmouseout="this.style.color='#333'">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-          </button>
+          </button>\`}
         </div>
       </div>
       <div id="curl-panel-\${idx}" style="display:none;background:#060606;border:1px solid #1a1a1a;border-radius:8px;padding:12px 14px;margin-bottom:10px">
@@ -5542,8 +5691,12 @@ async function init() {
     if (wsList && !wsList.error && wsList.length > 0) {
       wsState.workspaces = wsList;
       const personal = wsList.find(function(w) { return w.role === 'owner' && w.name.includes('(pessoal)'); }) || wsList[0];
-      if (personal) wsState.currentWsId = personal.id;
+      if (personal) {
+        wsState.currentWsId = personal.id;
+        wsState.currentRole = personal.role || 'owner';
+      }
       updateWorkspaceSelector();
+      applyRoleUI();
       document.getElementById('workspace-selector').style.display = 'block';
     }
 
