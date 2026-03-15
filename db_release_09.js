@@ -31,7 +31,7 @@ db.pragma('foreign_keys = ON');
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id          TEXT PRIMARY KEY,
-    github_id   TEXT UNIQUE,
+    github_id   TEXT UNIQUE NOT NULL,
     login       TEXT NOT NULL,
     name        TEXT,
     email       TEXT,
@@ -173,8 +173,6 @@ db.prepare(`UPDATE plan_config SET member_limit=10      WHERE plan='team'       
 db.prepare(`UPDATE plan_config SET member_limit=999999  WHERE plan='enterprise' AND member_limit<=1`).run();
 
 try { db.exec(`ALTER TABLE endpoints ADD COLUMN user_id TEXT`); } catch(_) {}
-try { db.exec(`ALTER TABLE users ADD COLUMN google_id TEXT`); } catch(_) {}
-try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL`); } catch(_) {}
 try { db.exec(`ALTER TABLE endpoints ADD COLUMN workspace_id TEXT`); } catch(_) {}
 // Index on workspace_id must come AFTER the column is guaranteed to exist
 try { db.exec(`CREATE INDEX IF NOT EXISTS idx_ep_workspace ON endpoints(workspace_id)`); } catch(_) {}
@@ -247,27 +245,6 @@ module.exports = {
         avatar=excluded.avatar,last_login=datetime('now')`
     ).run(u.id,String(u.githubId),u.login,u.name||null,u.email||null,u.avatar||null,u.plan||'free',u.isAdmin?1:0);
     return module.exports.getUserByGithubId(u.githubId);
-  },
-  upsertGoogleUser(u) {
-    // Try find existing user by google_id first, then by email
-    let existing = db.prepare(`SELECT * FROM users WHERE google_id=?`).get(u.googleId);
-    if (!existing && u.email) {
-      existing = db.prepare(`SELECT * FROM users WHERE email=? AND google_id IS NULL`).get(u.email);
-    }
-    if (existing) {
-      // Update profile fields and set google_id
-      db.prepare(`UPDATE users SET google_id=?,name=?,email=?,avatar=?,last_login=datetime('now') WHERE id=?`)
-        .run(u.googleId, u.name||existing.name, u.email||existing.email, u.avatar||existing.avatar, existing.id);
-      return module.exports.getUserById(existing.id);
-    }
-    // New user
-    db.prepare(`INSERT INTO users (id,github_id,google_id,login,name,email,avatar,plan,is_admin,last_login)
-      VALUES (?,NULL,?,?,?,?,?,?,?,datetime('now'))`)
-      .run(u.id, u.googleId, u.login, u.name||null, u.email||null, u.avatar||null, u.plan||'free', u.isAdmin?1:0);
-    return module.exports.getUserById(u.id);
-  },
-  getUserByGoogleId(gid) {
-    return rowToUser(db.prepare(`SELECT * FROM users WHERE google_id=?`).get(String(gid)));
   },
   getAllUsers() {
     return db.prepare(`
