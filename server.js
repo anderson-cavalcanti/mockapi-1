@@ -6165,6 +6165,8 @@ document.addEventListener('click', function(e) {
     if (dd) dd.style.display = 'none';
     return;
   }
+  const wsItem = e.target.closest('[data-wsid]');
+  if (wsItem) { selectWsFromDD(wsItem.dataset.wsid); return; }
   // Close all dropdowns on outside click
   const dd = document.getElementById('user-dropdown');
   if (dd) dd.style.display = 'none';
@@ -6204,7 +6206,7 @@ function renderWsDDList(filter) {
     const planLabel = ws.role === 'owner' ? 'Pro' : ws.role;
     const bgColor = isPersonal ? 'linear-gradient(135deg,#00FF87,#00aaff)' : 'linear-gradient(135deg,#4dabf7,#7c3aed)';
     const textColor = '#000';
-    return '<div class="ws-dd-item' + (isActive ? ' ws-dd-active' : '') + '" onclick="selectWsFromDD('' + ws.id + '')">'
+    return '<div class="ws-dd-item' + (isActive ? ' ws-dd-active' : '') + '" data-wsid="' + ws.id + '">'
       + '<div class="ws-dd-av" style="background:' + bgColor + ';color:' + textColor + '">' + initials + '</div>'
       + '<div class="ws-dd-info"><div class="ws-dd-iname">' + esc(displayName) + '</div><div class="ws-dd-iplan">' + planLabel + '</div></div>'
       + '</div>';
