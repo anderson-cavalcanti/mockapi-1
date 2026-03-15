@@ -3344,7 +3344,7 @@ function getDashboardHTML(port, baseUrl, currentUser) {
   const avatarHtml = userAvatar
     ? '<img src="' + userAvatar + '" style="width:28px;height:28px;border-radius:50%;flex-shrink:0;border:1px solid #2a2a2a"/>'
     : '<div style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#00FF87,#0099ff);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#000;flex-shrink:0">'
-      + (userLogin.slice(0,2).toUpperCase() || "U") + '</div>';
+      + (userLogin.slice(0,2).toUpperCase() || 'U') + '</div>';
 
   // Admin gets a gold star item at top of dropdown
   const adminItem = isAdmin
@@ -4359,7 +4359,7 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 <script>
 // ── STATE ────────────────────────────────────────────────────────────────────
 const baseUrl = '${baseUrl}';  // injected by server — works on localhost and production
-window.__currentUserId = '${currentUser ? currentUser.id : ""}';  // for WS membership checks
+window.__currentUserId = '${currentUser ? currentUser.id : ''}';  // for WS membership checks
 const state = {
   endpoints: {},
   requests: {},      // endpointId -> []
