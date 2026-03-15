@@ -3716,7 +3716,7 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
           </div>
           <div id="ws-dd-list"></div>
           <div class="ws-dd-sep"></div>
-          <div class="ws-dd-item ws-dd-new">+ Criar novo workspace</div>
+          <div class="ws-dd-item ws-dd-new" onclick="closeWsSwitcher();showWorkspaceModal('new')">+ Criar novo workspace</div>
         </div>
       </div>
     </div>
@@ -6236,68 +6236,71 @@ function createVersionedRule(fromPath, version) {
 
 // ── USER DROPDOWN ────────────────────────────────────────────────────────────
 function toggleUserDropdown(e) {
-  // Only the user-bar-row itself (not its children inside #user-dropdown) toggles the dd
-  if (e.target.closest('#user-dropdown')) return; // let delegation handle dd clicks
-  e.stopPropagation(); // prevent global click handler from closing immediately
+  e.stopPropagation();
+  // If click originated from INSIDE the dropdown, ignore (let delegation handle it)
+  if (e.target.closest('#user-dropdown')) return;
   const dd = document.getElementById('user-dropdown');
   if (!dd) return;
-  dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+  const isOpen = dd.style.display !== 'none';
+  dd.style.display = isOpen ? 'none' : 'block';
 }
 
-// ── GLOBAL CLICK DELEGATION ──────────────────────────────────────────────────
-// Order matters: specific targets must be checked BEFORE generic container checks.
+// Event delegation — handles all dropdown interactions
 document.addEventListener('click', function(e) {
-
-  // ① Workspace switcher item clicked → switch workspace
+  // WS switcher items
   const wsItem = e.target.closest('[data-wsid]');
   if (wsItem) {
-    closeWsSwitcher();
+    e.stopPropagation();
     selectWsFromDD(wsItem.dataset.wsid);
     return;
   }
 
-  // ② "Criar novo workspace" inside ws dropdown
-  if (e.target.closest('.ws-dd-new')) {
+  // WS new workspace button inside dd
+  const wsDdNew = e.target.closest('.ws-dd-new');
+  if (wsDdNew) {
+    e.stopPropagation();
     closeWsSwitcher();
     showWorkspaceModal('new');
     return;
   }
 
-  // ③ User dropdown NAV item (navigates to a route)
+  // User dropdown: navigation items
   const navItem = e.target.closest('[data-udd-nav]');
   if (navItem) {
-    document.getElementById('user-dropdown').style.display = 'none';
-    window.location.href = navItem.getAttribute('data-udd-nav');
+    const dd = document.getElementById('user-dropdown');
+    if (dd) dd.style.display = 'none';
+    window.location.href = navItem.dataset.uddNav;
     return;
   }
 
-  // ④ User dropdown ACTION item (triggers a JS function)
+  // User dropdown: action items
   const actItem = e.target.closest('[data-udd-action]');
   if (actItem) {
-    document.getElementById('user-dropdown').style.display = 'none';
-    const act = actItem.getAttribute('data-udd-action');
+    const act = actItem.dataset.uddAction;
+    const dd = document.getElementById('user-dropdown');
+    if (dd) dd.style.display = 'none';
     if (act === 'workspaces') showWorkspaceModal();
     else if (act === 'tokens') showTokenModal();
     return;
   }
 
-  // ⑤ Click inside ws-switcher-dd but not on an item → keep open
-  if (e.target.closest('#ws-switcher-dd')) return;
+  // Clicks INSIDE ws dropdown — don't close it
+  const wsDd = e.target.closest('#ws-switcher-dd');
+  if (wsDd) { e.stopPropagation(); return; }
 
-  // ⑥ Click on the user-bar-row toggle (but NOT inside the dropdown)
-  // — handled by toggleUserDropdown inline, just prevent double-close here
+  // Clicks INSIDE user dropdown — don't close it
+  const userDd = e.target.closest('#user-dropdown');
+  if (userDd) { e.stopPropagation(); return; }
 
-  // ⑦ Anything else → close all dropdowns
-  const udd = document.getElementById('user-dropdown');
-  if (udd) udd.style.display = 'none';
+  // Outside click — close everything
+  const dd = document.getElementById('user-dropdown');
+  if (dd) dd.style.display = 'none';
   closeWsSwitcher();
 });
 
 // ── WS SWITCHER DROPDOWN ──────────────────────────────────────────────────────
 function toggleWsSwitcher(e) {
   e.stopPropagation();
-  // If click came from inside the dd itself (item, search, etc.), ignore toggle
-  if (e.target.closest('#ws-switcher-dd')) return;
   const dd = document.getElementById('ws-switcher-dd');
   if (!dd) return;
   const isOpen = dd.classList.contains('open');
@@ -6336,7 +6339,6 @@ function renderWsDDList(filter) {
 function filterWsDD(val) { renderWsDDList(val); }
 function selectWsFromDD(wsId) {
   closeWsSwitcher();
-  if (!wsId) return;
   switchWorkspace(wsId);
 }
 
