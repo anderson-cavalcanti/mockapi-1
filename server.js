@@ -3371,7 +3371,7 @@ function getDashboardHTML(port, baseUrl, currentUser) {
           + 'text-overflow:ellipsis;white-space:nowrap">' + userLogin + '</span>'
       + (isAdmin ? '<span style="font-size:9px;color:#FFD700;font-weight:700;flex-shrink:0">Admin</span>' : '')
       + planBadge
-      + '<div id="user-dropdown" onclick="event.stopPropagation()" style="display:none;position:absolute;bottom:40px;left:-8px;right:-8px;'
+      + '<div id="user-dropdown" style="display:none;position:absolute;bottom:40px;left:-8px;right:-8px;'
           + 'background:#141414;border:1px solid #2a2a2a;border-radius:10px;'
           + 'box-shadow:0 -8px 24px rgba(0,0,0,.8);padding:5px;z-index:1000">'
         + '<div style="display:flex;align-items:center;gap:9px;padding:9px 10px 10px;'
@@ -3496,6 +3496,21 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 .udd-item{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;cursor:pointer;font-size:12px;color:#777;transition:background .12s}
 .udd-item:hover{background:#1e1e1e;color:#ccc}
 .udd-danger:hover{background:#2a1515!important;color:#ff6b6b!important}
+/* Sidebar quick links */
+.sb-ql{font-size:10px;color:#333;text-decoration:none;flex:1;text-align:center;padding:4px 0;border-radius:4px;border:1px solid #1a1a1a;transition:all .2s;background:none;cursor:pointer;font-family:inherit;display:block}
+.sb-ql-docs:hover{color:#00FF87!important;border-color:#00FF8733!important}
+.sb-ql-tokens:hover{color:#7DD3FC!important;border-color:#7DD3FC33!important}
+.sb-ql-plans:hover{color:#ff8c00!important;border-color:#ff8c0033!important}
+/* Button hover classes replacing inline onmouseover */
+.hover-bg-postman{background:#F9731615;border:1px solid #F9731644;border-radius:8px;padding:9px 14px;color:#FB923C;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;transition:background .2s;white-space:nowrap}
+.hover-bg-postman:hover{background:#F9731625}
+.hover-bg-openapi{background:#7C3AED15;border:1px solid #7C3AED44;border-radius:8px;padding:9px 14px;color:#A78BFA;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;transition:background .2s;white-space:nowrap}
+.hover-bg-openapi:hover{background:#7C3AED25}
+.hover-txt-white{transition:color .15s}.hover-txt-white:hover{color:#fff!important}
+.hover-bg-green12{transition:background .15s}.hover-bg-green12:hover{background:#00FF8720!important}
+.hover-bg-bg3{transition:background .12s}.hover-bg-bg3:hover{background:var(--bg3)!important}
+.hover-txt-red{transition:color .15s}.hover-txt-red:hover{color:#FF4444!important}
+.hover-bg-1a{transition:background .15s}.hover-bg-1a:hover{background:#1a1a1a!important}
 
 /* TIME badge in header */
 .badge-time{background:#00FF8715;border:1px solid #00FF8733;color:#00FF88;cursor:pointer;display:flex;align-items:center;gap:4px;transition:all .15s}
@@ -3744,9 +3759,9 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
       <div id="plan-usage" style="width:100%"></div>
       <!-- Quick links -->
       <div style="display:flex;gap:5px;width:100%">
-        <a href="/docs" target="_blank" style="font-size:10px;color:#333;text-decoration:none;flex:1;text-align:center;padding:4px 0;border-radius:4px;border:1px solid #1a1a1a;transition:all .2s" onmouseover="this.style.color='#00FF87';this.style.borderColor='#00FF8733'" onmouseout="this.style.color='#333';this.style.borderColor='#1a1a1a'">📄 Docs</a>
-        <button onclick="showTokenModal()" style="font-size:10px;color:#333;background:none;cursor:pointer;flex:1;text-align:center;padding:4px 0;border-radius:4px;border:1px solid #1a1a1a;transition:all .2s;font-family:inherit" onmouseover="this.style.color='#7DD3FC';this.style.borderColor='#7DD3FC33'" onmouseout="this.style.color='#333';this.style.borderColor='#1a1a1a'">🔑 Tokens</button>
-        <a href="/upgrade" style="font-size:10px;color:#333;text-decoration:none;flex:1;text-align:center;padding:4px 0;border-radius:4px;border:1px solid #1a1a1a;transition:all .2s" onmouseover="this.style.color='#ff8c00';this.style.borderColor='#ff8c0033'" onmouseout="this.style.color='#333';this.style.borderColor='#1a1a1a'">⚡ Planos</a>
+        <a href="/docs" target="_blank" class="sb-ql sb-ql-docs">📄 Docs</a>
+        <button onclick="showTokenModal()" class="sb-ql sb-ql-tokens">🔑 Tokens</button>
+        <a href="/upgrade" class="sb-ql sb-ql-plans">⚡ Planos</a>
       </div>
       <!-- User row with dropdown -->
       ${userBarHtml}
@@ -3930,10 +3945,10 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
                 </div>
               </div>
               <div style="display:flex;gap:8px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
-                <button style="background:#F9731615;border:1px solid #F9731644;border-radius:8px;padding:9px 14px;color:#FB923C;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .2s;white-space:nowrap" onclick="showPostmanModal()" onmouseover="this.style.background='#F9731625'" onmouseout="this.style.background='#F9731615'">
+                <button class="hover-bg-postman" onclick="showPostmanModal()">
                   📦 Postman
                 </button>
-                <button style="background:#7C3AED15;border:1px solid #7C3AED44;border-radius:8px;padding:9px 14px;color:#A78BFA;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .2s;white-space:nowrap" onclick="showOpenApiModal()" onmouseover="this.style.background='#7C3AED25'" onmouseout="this.style.background='#7C3AED15'">
+                <button class="hover-bg-openapi" onclick="showOpenApiModal()">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                   OpenAPI
                 </button>
@@ -4040,7 +4055,7 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 
   <!-- Header -->
   <div class="ws-fs-header">
-    <button id="ws-close-btn" style="background:none;border:none;color:var(--text3);cursor:pointer;padding:4px;display:flex;align-items:center;border-radius:6px;transition:background .12s" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">
+    <button id="ws-close-btn" style="background:none;border:none;color:var(--text3);cursor:pointer;padding:4px;display:flex;align-items:center;border-radius:6px;transition:background .12s" class="hover-bg-bg3">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
     <span class="ws-fs-title">Workspaces</span>
@@ -4313,19 +4328,19 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
       <div style="display:flex;gap:8px">
         <button onclick="exportTableJSON(state.activeCrudKey)"
           style="background:#161616;border:1px solid #2a2a2a;border-radius:6px;padding:6px 11px;color:#888;font-size:11px;cursor:pointer;font-family:'Space Mono',monospace;transition:all .2s;display:flex;align-items:center;gap:5px"
-          onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'" title="Exportar como JSON">
+          class="hover-txt-white" title="Exportar como JSON">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Export
         </button>
         <button onclick="importTableJSON(state.activeCrudKey)"
           style="background:#161616;border:1px solid #2a2a2a;border-radius:6px;padding:6px 11px;color:#888;font-size:11px;cursor:pointer;font-family:'Space Mono',monospace;transition:all .2s;display:flex;align-items:center;gap:5px"
-          onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'" title="Importar JSON">
+          class="hover-txt-white" title="Importar JSON">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           Import
         </button>
         <button onclick="showFakerModal(state.activeCrudKey)"
           style="background:#00FF8712;border:1px solid #00FF8733;border-radius:6px;padding:6px 11px;color:var(--green);font-size:11px;cursor:pointer;font-family:'Space Mono',monospace;font-weight:700;transition:all .2s"
-          onmouseover="this.style.background='#00FF8720'" onmouseout="this.style.background='#00FF8712'" title="Gerar dados fake">
+          class="hover-bg-green12" title="Gerar dados fake">
           ✦ Faker
         </button>
         <button onclick="showAddRowModal()" style="background:var(--green-dim);border:1px solid var(--green-border);border-radius:6px;padding:7px 14px;color:var(--green);font-size:12px;font-weight:700;font-family:'Space Mono',monospace">+ Linha</button>
@@ -5727,7 +5742,7 @@ function renderCrudTables() {
     const MC = {GET:'#00C8FF',POST:'#00FF87',PATCH:'#FF8C42',PUT:'#FFD700',DELETE:'#FF4444'};
     const miniRow = (m, url, ck) => \`<div onclick="copyCurlIdx(\${idx},'\${ck}')"
       style="background:#111;border-radius:5px;padding:6px 10px;display:flex;align-items:center;gap:8px;cursor:pointer;transition:background .15s;min-width:0;overflow:hidden"
-      onmouseover="this.style.background='#1a1a1a'" onmouseout="this.style.background='#111'" title="\${esc(url)}">
+      class="hover-bg-1a" title="\${esc(url)}">
       <span style="color:\${MC[m]||'#aaa'};width:54px;flex-shrink:0;font-weight:700;font-size:10px;letter-spacing:.04em">\${m}</span>
       <span style="color:#444;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;flex:1;min-width:0">\${esc(url)}</span>
       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#2a2a2a" stroke-width="2" style="flex-shrink:0"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
@@ -5751,29 +5766,29 @@ function renderCrudTables() {
         <div style="display:flex;gap:6px;flex-shrink:0">
           \${isViewer() ? '' : \`<button onclick="editCrudTable('\${esc(t.key)}')"
             style="background:#161616;border:1px solid #2a2a2a;border-radius:7px;padding:6px 12px;color:#888;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .2s"
-            onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">
+            class="hover-txt-white">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             Editar
           </button>\`}
           <button onclick="toggleCurlPanel(\${idx})"
             style="background:#161616;border:1px solid #2a2a2a;border-radius:7px;padding:6px 12px;color:#888;font-size:11px;cursor:pointer;font-family:'Space Mono',monospace;display:flex;align-items:center;gap:5px;transition:all .2s"
-            onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">
+            class="hover-txt-white">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             cURL
           </button>
           \${isViewer() ? '' : \`<button onclick="showFakerModal('\${esc(t.key)}')"
             style="background:#00FF8712;border:1px solid #00FF8733;border-radius:7px;padding:6px 12px;color:var(--green);font-size:11px;cursor:pointer;font-weight:700;transition:all .2s"
-            onmouseover="this.style.background='#00FF8720'" onmouseout="this.style.background='#00FF8712'" title="Gerar dados fake">
+            class="hover-bg-green12" title="Gerar dados fake">
             ✦ Faker
           </button>\`}
           <button onclick="openCrudData('\${esc(t.key)}')"
             style="background:#161616;border:1px solid #2a2a2a;border-radius:7px;padding:6px 12px;color:#888;font-size:12px;cursor:pointer;transition:all .2s"
-            onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">
+            class="hover-txt-white">
             Ver Dados
           </button>
           \${isViewer() ? '' : \`<button onclick="deleteCrudTable('\${esc(t.key)}')"
             style="background:none;border:none;color:#333;cursor:pointer;padding:6px;transition:color .2s"
-            onmouseover="this.style.color='#FF4444'" onmouseout="this.style.color='#333'">
+            class="hover-txt-red">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
           </button>\`}
         </div>
@@ -6490,7 +6505,7 @@ document.addEventListener('keydown', e => {
     </div>
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:18px">
       ${[0,200,500,1000,2000,3000,4000,5000].map(v =>
-        `<button onclick="setDelayPreset(${v})" style="background:#111;border:1px solid #222;border-radius:6px;padding:7px 4px;color:#666;font-size:11px;font-family:var(--mono);cursor:pointer;transition:all .2s" onmouseover="this.style.color='#fff';this.style.borderColor='#444'" onmouseout="this.style.color='#666';this.style.borderColor='#222'">${v}ms</button>`
+        `<button onclick="setDelayPreset(${v})" style="background:#111;border:1px solid #222;border-radius:6px;padding:7px 4px;color:#666;font-size:11px;font-family:var(--mono);cursor:pointer;transition:all .2s" class="hover-txt-white">${v}ms</button>`
       ).join('')}
     </div>
     <div class="btn-row">
