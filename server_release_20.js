@@ -3783,169 +3783,91 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
   </div>
 </div>
 
-<!-- WORKSPACE FULLSCREEN -->
-<div id="workspace-modal" style="display:none;position:fixed;inset:0;z-index:2000;background:var(--bg);flex-direction:column;animation:wsFadeIn .18s ease">
-<style>
-@keyframes wsFadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-#workspace-modal{font-family:'Space Grotesk',sans-serif}
-.ws-fs-header{display:flex;align-items:center;gap:16px;padding:0 32px;height:60px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg2)}
-.ws-fs-title{font-size:15px;font-weight:700;color:var(--text);letter-spacing:-.01em}
-.ws-fs-body{display:flex;flex:1;min-height:0;overflow:hidden}
-.ws-fs-sidebar{width:260px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;background:var(--bg)}
-.ws-fs-sidebar-header{padding:20px 20px 12px;border-bottom:1px solid var(--border)}
-.ws-fs-sidebar-label{font-size:10px;color:var(--text4);letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px}
-.ws-fs-list{flex:1;overflow-y:auto;padding:8px}
-.ws-fs-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;margin-bottom:2px;border:1px solid transparent;transition:all .12s;position:relative}
-.ws-fs-item:hover{background:var(--bg2)}
-.ws-fs-item.active{background:var(--bg2);border-color:var(--green)}
-.ws-fs-item-icon{font-size:18px;flex-shrink:0}
-.ws-fs-item-info{flex:1;min-width:0}
-.ws-fs-item-name{font-size:12px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ws-fs-item-meta{font-size:10px;color:var(--text3);margin-top:1px}
-.ws-fs-item-dot{width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0}
-.ws-fs-create{padding:12px 16px;border-top:1px solid var(--border)}
-.ws-fs-main{flex:1;overflow-y:auto;display:flex;flex-direction:column}
-.ws-fs-panel-header{padding:24px 32px 20px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:14px;flex-shrink:0}
-.ws-fs-panel-icon{width:44px;height:44px;border-radius:10px;background:var(--bg3);border:1px solid var(--border2);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
-.ws-fs-panel-content{flex:1;padding:24px 32px;display:flex;flex-direction:column;gap:24px}
-.ws-fs-section{display:flex;flex-direction:column;gap:10px}
-.ws-fs-section-title{font-size:11px;font-weight:700;color:var(--text3);letter-spacing:.08em;text-transform:uppercase;padding-bottom:8px;border-bottom:1px solid var(--border)}
-.ws-fs-invite-row{display:flex;gap:8px;align-items:center}
-.ws-fs-member-row{display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--bg2);border-radius:8px;border:1px solid var(--border)}
-.ws-fs-member-avatar{width:32px;height:32px;border-radius:50%;overflow:hidden;flex-shrink:0;background:var(--border2);display:flex;align-items:center;justify-content:center;font-size:12px}
-.ws-fs-member-info{flex:1;min-width:0}
-.ws-fs-member-name{font-size:12px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ws-fs-member-sub{font-size:10px;color:var(--text3);margin-top:1px}
-.ws-invite-link-box{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:12px 14px;display:flex;align-items:center;gap:10px}
-.ws-invite-link-url{flex:1;font-size:11px;color:var(--green);font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ws-link-copy-btn{background:var(--bg2);border:1px solid var(--border2);border-radius:6px;padding:5px 10px;font-size:11px;color:var(--text2);cursor:pointer;flex-shrink:0;transition:all .12s}
-.ws-link-copy-btn:hover{border-color:var(--green);color:var(--green)}
-.ws-whatsapp-btn{display:flex;align-items:center;gap:6px;background:#25D36615;border:1px solid #25D36633;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;color:#25D366;cursor:pointer;text-decoration:none;transition:all .12s;flex-shrink:0}
-.ws-whatsapp-btn:hover{background:#25D36625}
-.ws-fs-empty{flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:var(--text4)}
-.ws-fs-badge{font-size:10px;font-weight:700;letter-spacing:.06em;border-radius:4px;padding:2px 8px;border:1px solid #00FF8744;color:var(--green)}
-.ws-fs-role-select{background:var(--bg2);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:11px;padding:4px 8px;cursor:pointer}
-.ws-fs-role-select:disabled{opacity:.4;cursor:default}
-.ws-remove-btn{background:none;border:none;color:var(--text4);cursor:pointer;font-size:16px;padding:2px 6px;border-radius:4px;transition:color .12s;flex-shrink:0}
-.ws-remove-btn:hover{color:#FF4D6D}
-.ws-fs-delete-zone{margin-top:auto;padding:20px 32px;border-top:1px solid var(--border)}
-.ws-error-box{background:#FF4D6D15;border:1px solid #FF4D6D44;border-radius:8px;padding:10px 14px;font-size:12px;color:#FF4D6D}
-</style>
+<!-- WORKSPACE MODAL -->
+<div id="workspace-modal" class="modal-overlay" style="display:none">
+  <div class="modal" style="width:660px;height:500px;padding:0;overflow:hidden;display:flex;flex-direction:column">
 
-  <!-- Header -->
-  <div class="ws-fs-header">
-    <button id="ws-close-btn" style="background:none;border:none;color:var(--text3);cursor:pointer;padding:4px;display:flex;align-items:center;border-radius:6px;transition:background .12s" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-    </button>
-    <span class="ws-fs-title">Workspaces</span>
-    <div style="flex:1"></div>
-    <span style="font-size:11px;color:var(--text4)">Gerencie equipes e acessos</span>
-  </div>
-
-  <!-- Body -->
-  <div class="ws-fs-body">
-
-    <!-- Sidebar -->
-    <div class="ws-fs-sidebar">
-      <div class="ws-fs-sidebar-header">
-        <div class="ws-fs-sidebar-label">Seus workspaces</div>
-        <div class="ws-fs-create">
-          <input id="ws-new-name" class="form-input" placeholder="Nome do novo workspace..." style="font-size:12px;padding:8px 10px;margin-bottom:8px;width:100%"/>
-          <button id="ws-create-btn" class="btn-primary" style="width:100%;font-size:12px;padding:9px 0;display:flex;align-items:center;justify-content:center;gap:6px">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            Criar workspace
-          </button>
-        </div>
-      </div>
-      <div id="ws-sidebar-list" class="ws-fs-list"></div>
+    <!-- Header -->
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);flex-shrink:0">
+      <span style="font-size:14px;font-weight:700;color:var(--text)">Workspaces</span>
+      <button id="ws-close-btn" class="icon-btn">✕</button>
     </div>
 
-    <!-- Main panel -->
-    <div class="ws-fs-main" id="ws-main-area">
+    <!-- Body: sidebar + panel -->
+    <div style="display:flex;flex:1;min-height:0;overflow:hidden">
 
-      <!-- Empty state -->
-      <div id="ws-panel-empty" class="ws-fs-empty">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity=".2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-        <div style="font-size:13px">Selecione um workspace</div>
-        <div style="font-size:11px;color:var(--text4)">ou crie um novo ao lado</div>
+      <!-- LEFT sidebar -->
+      <div style="width:210px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;background:var(--bg3)">
+        <div id="ws-sidebar-list" style="flex:1;overflow-y:auto;padding:8px"></div>
+        <div style="padding:8px;border-top:1px solid var(--border)">
+          <input id="ws-new-name" class="form-input" placeholder="Novo workspace..." style="font-size:11px;padding:6px 8px;margin-bottom:6px"/>
+          <button id="ws-create-btn" class="btn-primary" style="width:100%;font-size:12px;padding:7px 0">+ Criar</button>
+        </div>
       </div>
 
-      <!-- Panel content -->
-      <div id="ws-panel" style="display:none;flex-direction:column;flex:1">
+      <!-- RIGHT panel -->
+      <div style="flex:1;overflow-y:auto;display:flex;flex-direction:column">
 
-        <!-- Panel header -->
-        <div class="ws-fs-panel-header">
-          <div class="ws-fs-panel-icon">
-            <span id="ws-panel-icon">🏢</span>
-          </div>
-          <div style="flex:1;min-width:0">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <div id="ws-panel-name" style="font-size:18px;font-weight:700;color:var(--text)"></div>
-              <span id="ws-panel-active" style="display:none" class="ws-fs-badge">ATIVO</span>
-            </div>
-            <div id="ws-panel-meta" style="font-size:12px;color:var(--text3);margin-top:4px"></div>
-          </div>
-          <button id="ws-switch-btn" class="btn-sm-green" style="display:none;flex-shrink:0">Ativar workspace</button>
+        <!-- placeholder -->
+        <div id="ws-panel-empty" style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px">
+          <div style="font-size:36px;opacity:.3">🏢</div>
+          <div style="font-size:12px;color:var(--text3)">Selecione um workspace ao lado</div>
         </div>
 
-        <!-- Scrollable content -->
-        <div class="ws-fs-panel-content">
+        <!-- panel content -->
+        <div id="ws-panel" style="display:none;flex-direction:column;flex:1">
 
-          <!-- Invite section -->
-          <div id="ws-invite-box" class="ws-fs-section">
-            <div class="ws-fs-section-title">Convidar membro</div>
-            <div id="ws-seat-status" style="font-size:12px;color:var(--text3)"></div>
-            <div class="ws-fs-invite-row">
-              <input id="ws-invite-login" class="form-input" placeholder="GitHub username ou email" style="flex:1;font-size:13px"/>
-              <select id="ws-invite-role" class="form-input" style="width:100px;flex-shrink:0;font-size:13px">
-                <option value="editor">Editor</option>
-                <option value="viewer">Viewer</option>
-              </select>
-              <button id="ws-invite-btn" class="btn-primary" style="width:auto;padding:0 18px;flex-shrink:0">Convidar</button>
+          <!-- ws header -->
+          <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+            <span id="ws-panel-icon" style="font-size:22px">🏢</span>
+            <div style="flex:1">
+              <div id="ws-panel-name" style="font-size:14px;font-weight:700;color:var(--text)"></div>
+              <div id="ws-panel-meta" style="font-size:11px;color:var(--text3);margin-top:2px"></div>
             </div>
-            <div style="font-size:11px;color:var(--text4)">
-              <strong style="color:var(--text3)">Editor</strong> — cria e edita endpoints &nbsp;·&nbsp;
-              <strong style="color:var(--text3)">Viewer</strong> — somente leitura
-            </div>
-
-            <!-- Invite link -->
-            <div class="ws-fs-section-title" style="margin-top:4px">Link de convite</div>
-            <div class="ws-invite-link-box">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2" flex-shrink="0"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-              <span class="ws-invite-link-url" id="ws-invite-link-url">Gerando link...</span>
-              <button class="ws-link-copy-btn" id="ws-link-copy-btn" onclick="copyInviteLink()">Copiar</button>
-              <a class="ws-whatsapp-btn" id="ws-whatsapp-btn" href="#" target="_blank">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
-                WhatsApp
-              </a>
-            </div>
+            <span id="ws-panel-active" style="display:none;font-size:10px;color:var(--green);font-weight:700;letter-spacing:.06em;border:1px solid #00FF8744;border-radius:4px;padding:2px 8px">ATIVO</span>
+            <button id="ws-switch-btn" class="btn-sm-green" style="display:none">Ativar</button>
           </div>
 
-          <!-- Members section -->
-          <div class="ws-fs-section">
-            <div class="ws-fs-section-title">
-              Membros
-              <span id="ws-member-count" style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0;font-size:11px;margin-left:4px"></span>
+          <!-- scrollable content -->
+          <div style="flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:16px">
+
+            <!-- invite -->
+            <div id="ws-invite-box">
+              <div class="section-label">Convidar membro</div>
+              <div id="ws-seat-status" style="margin:6px 0;font-size:11px;color:var(--text3)"></div>
+              <div style="display:flex;gap:6px;margin-top:6px">
+                <input id="ws-invite-login" class="form-input" placeholder="GitHub username" style="flex:1"/>
+                <select id="ws-invite-role" class="form-input" style="width:88px;flex-shrink:0">
+                  <option value="editor">Editor</option>
+                  <option value="viewer">Viewer</option>
+                </select>
+                <button id="ws-invite-btn" class="btn-primary" style="width:auto;padding:0 14px;flex-shrink:0;font-size:12px">Convidar</button>
+              </div>
+              <div style="font-size:10px;color:var(--text3);margin-top:5px">Editor: cria/edita endpoints &nbsp;·&nbsp; Viewer: só leitura</div>
             </div>
-            <div id="ws-members-list" style="display:flex;flex-direction:column;gap:6px"></div>
+
+            <!-- members -->
+            <div>
+              <div class="section-label">Membros <span id="ws-member-count" style="color:var(--text2);font-weight:400;text-transform:none;letter-spacing:0"></span></div>
+              <div id="ws-members-list" style="margin-top:6px;display:flex;flex-direction:column;gap:4px"></div>
+            </div>
+
+            <!-- pending -->
+            <div id="ws-pending-box" style="display:none">
+              <div class="section-label">Convites pendentes</div>
+              <div id="ws-pending-list" style="margin-top:6px;display:flex;flex-direction:column;gap:4px"></div>
+            </div>
+
+            <!-- error -->
+            <div id="ws-panel-error" class="ws-error-box" style="display:none"></div>
+
+            <!-- delete -->
+            <div id="ws-delete-box" style="display:none;margin-top:auto;padding-top:12px;border-top:1px solid #222">
+              <button id="ws-delete-btn" class="ws-delete-btn">🗑 Deletar workspace</button>
+            </div>
+
           </div>
-
-          <!-- Pending invites -->
-          <div id="ws-pending-box" style="display:none" class="ws-fs-section">
-            <div class="ws-fs-section-title">Convites pendentes</div>
-            <div id="ws-pending-list" style="display:flex;flex-direction:column;gap:6px"></div>
-          </div>
-
-          <!-- Error -->
-          <div id="ws-panel-error" class="ws-error-box" style="display:none"></div>
-
         </div>
-
-        <!-- Delete zone -->
-        <div id="ws-delete-box" style="display:none" class="ws-fs-delete-zone">
-          <button id="ws-delete-btn" class="ws-delete-btn">🗑 Deletar workspace</button>
-        </div>
-
       </div>
     </div>
   </div>
@@ -4518,9 +4440,7 @@ async function loadEndpointsForWorkspace(wsId) {
 }
 
 function showWorkspaceModal() {
-  const el = document.getElementById('workspace-modal');
-  el.style.display = 'flex';
-  document.body.style.overflow = 'hidden';
+  document.getElementById('workspace-modal').style.display = 'flex';
   renderWsSidebar();
   const toOpen = wsState.managingWsId || wsState.currentWsId;
   if (toOpen) openManage(toOpen);
@@ -4528,17 +4448,6 @@ function showWorkspaceModal() {
 
 function closeWorkspaceModal() {
   document.getElementById('workspace-modal').style.display = 'none';
-  document.body.style.overflow = '';
-}
-
-function copyInviteLink() {
-  const url = document.getElementById('ws-invite-link-url')?.textContent || '';
-  if (!url) return;
-  navigator.clipboard.writeText(url).then(function() {
-    const btn = document.getElementById('ws-link-copy-btn');
-    if (btn) { btn.textContent = 'Copiado!'; btn.style.color = 'var(--green)'; setTimeout(function() { btn.textContent = 'Copiar'; btn.style.color = ''; }, 2000); }
-    toast('Link copiado!', 'success');
-  });
 }
 
 function renderWsSidebar() {
@@ -4548,29 +4457,17 @@ function renderWsSidebar() {
   wsState.workspaces.forEach(function(ws) {
     const isPersonal = ws.name.includes('(pessoal)');
     const displayName = ws.name.replace(' (pessoal)', '');
-    const isActive   = ws.id === wsState.currentWsId;
+    const isActive = ws.id === wsState.currentWsId;
     const isManaging = ws.id === wsState.managingWsId;
 
     const item = document.createElement('div');
-    item.className = 'ws-fs-item' + (isManaging ? ' active' : '');
-
-    const icon = document.createElement('div');
-    icon.className = 'ws-fs-item-icon';
-    icon.textContent = isPersonal ? '👤' : '🏢';
-
-    const info = document.createElement('div');
-    info.className = 'ws-fs-item-info';
-    info.innerHTML = '<div class="ws-fs-item-name">' + esc(displayName) + '</div>'
-      + '<div class="ws-fs-item-meta">' + (ws.ep_count || 0) + ' endpoint(s) · ' + (ws.role || 'owner') + '</div>';
-
-    item.appendChild(icon);
-    item.appendChild(info);
-    if (isActive) {
-      const dot = document.createElement('div');
-      dot.className = 'ws-fs-item-dot';
-      dot.title = 'Workspace ativo';
-      item.appendChild(dot);
-    }
+    item.className = 'ws-sidebar-item' + (isManaging ? ' active' : '');
+    item.innerHTML = '<span style="font-size:16px;flex-shrink:0">' + (isPersonal ? '👤' : '🏢') + '</span>'
+      + '<div style="flex:1;min-width:0">'
+      + '<div style="font-size:12px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(displayName) + '</div>'
+      + '<div style="font-size:10px;color:var(--text3)">' + (ws.ep_count || 0) + ' endpoint(s)</div>'
+      + '</div>'
+      + (isActive ? '<span style="font-size:8px;color:var(--green)">●</span>' : '');
     item.addEventListener('click', function() { openManage(ws.id); });
     el.appendChild(item);
   });
@@ -4584,13 +4481,6 @@ async function openManage(wsId) {
   document.getElementById('ws-panel-empty').style.display = 'none';
   const panel = document.getElementById('ws-panel');
   panel.style.display = 'flex';
-
-  // Update invite link
-  const inviteBase = window.location.origin + '/invite/' + wsId;
-  const linkEl = document.getElementById('ws-invite-link-url');
-  if (linkEl) linkEl.textContent = inviteBase;
-  const waBtn = document.getElementById('ws-whatsapp-btn');
-  if (waBtn) waBtn.href = 'https://wa.me/?text=' + encodeURIComponent('Você foi convidado para um workspace no MockAPI Inspector! Acesse: ' + inviteBase);
 
   // Loading state
   document.getElementById('ws-members-list').innerHTML = '<div style="color:var(--text3);font-size:12px;padding:4px 0">Carregando...</div>';
