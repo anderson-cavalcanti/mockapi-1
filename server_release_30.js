@@ -1579,15 +1579,8 @@ server.on('upgrade', (req, socket, head) => {
 
     wsClients.add(socket);
 
-    // Send only this user's personal workspace endpoints on connect
-    // Full endpoint list loads via /api/workspaces/:id/endpoints after workspace selection
-    const userEndpoints = socket._userId
-      ? db.getAllEndpoints(socket._userId)
-      : [];
-    const userCrudTables = socket._userId
-      ? db.getCrudTablesForUser(socket._userId)
-      : db.getAllCrudTables();
-    socket.write(wsFrame({ event: 'connected', payload: { clientId, endpoints: userEndpoints, crudTables: userCrudTables } }));
+    const crudTables = db.getAllCrudTables();
+    socket.write(wsFrame({ event: 'connected', payload: { clientId, endpoints: db.getAllEndpoints(), crudTables } }));
 
     socket.on('data', buf => { try { wsParse(buf); } catch(_){} });
     socket.on('close', () => wsClients.delete(socket));
@@ -4570,13 +4563,19 @@ function handleWsEvent(msg) {
   const { event, endpointId, payload } = msg;
   switch (event) {
     case 'connected':
-      // endpoints from WS connected are ONLY used as initial seed before workspace loads
-      // init() will overwrite with workspace-filtered endpoints via REST API
+      // Load all existing endpoints
+      if (payload.endpoints) {
+        payload.endpoints.forEach(ep => {
+          state.endpoints[ep.id] = ep;
+          if (!state.requests[ep.id]) state.requests[ep.id] = [];
+          if (!state.rules[ep.id]) state.rules[ep.id] = [];
+        });
+        renderEndpointList();
+      }
       if (payload.crudTables) {
         payload.crudTables.forEach(t => { state.crudTables[t.key] = t; });
+        if (state.selectedEp) renderCrudTables();
       }
-      // Do NOT load endpoints here — init() handles this via loadEndpointsForWorkspace()
-      // This prevents endpoints from other workspaces appearing on connect
       break;
     case 'endpoint_created':
       // Only add endpoint if it belongs to the current active workspace
@@ -6587,23 +6586,16 @@ async function init() {
     }
 
     // Load endpoints for active workspace (or all if no workspace)
-    // Load endpoints for active workspace via the proper REST route
-    // Never use /api/endpoints without workspace filter — that returns ALL user endpoints
-    if (wsState.currentWsId) {
-      await loadEndpointsForWorkspace(wsState.currentWsId);
-    } else {
-      // Fallback: no-auth mode or no workspace yet
-      const eps = await api('GET', '/api/endpoints');
-      if (Array.isArray(eps)) {
-        state.endpoints = {};
-        eps.forEach(function(ep) {
-          state.endpoints[ep.id] = ep;
-          state.requests[ep.id] = [];
-          state.rules[ep.id] = [];
-        });
-        renderEndpointList();
-      }
-    }
+    const url = wsState.currentWsId ? '/api/endpoints?workspace=' + wsState.currentWsId : '/api/endpoints';
+    const eps = await api('GET', url);
+    if (!Array.isArray(eps)) throw new Error('invalid endpoints response');
+    state.endpoints = {};
+    eps.forEach(function(ep) {
+      state.endpoints[ep.id] = ep;
+      state.requests[ep.id] = [];
+      state.rules[ep.id] = [];
+    });
+    renderEndpointList();
   } catch(e) {
     console.warn('Could not load endpoints, retrying...', e);
     setTimeout(init, 2000);

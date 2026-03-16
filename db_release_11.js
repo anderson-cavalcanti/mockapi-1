@@ -379,9 +379,6 @@ module.exports = {
   // CRUD TABLES
   getCrudTablesForEndpoint(epId) { return db.prepare(`SELECT * FROM crud_tables WHERE endpoint_id=?`).all(epId).map(rowToCrudTable); },
   getAllCrudTables() { return db.prepare(`SELECT * FROM crud_tables ORDER BY endpoint_id`).all().map(rowToCrudTable); },
-  getCrudTablesForUser(userId) {
-    return db.prepare(`SELECT ct.* FROM crud_tables ct JOIN endpoints e ON e.id=ct.endpoint_id WHERE e.user_id=? ORDER BY ct.endpoint_id`).all(userId).map(rowToCrudTable);
-  },
   getCrudTable(key)              { return rowToCrudTable(db.prepare(`SELECT * FROM crud_tables WHERE key=?`).get(key)); },
   saveCrudTable(key,epId,path,idField) {
     db.prepare(`INSERT OR REPLACE INTO crud_tables VALUES (?,?,?,?,?)`).run(key,epId,path,idField||'id',new Date().toISOString());
