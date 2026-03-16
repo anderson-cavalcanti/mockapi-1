@@ -752,12 +752,11 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
   // ── AUTH: Google OAuth start
   if (method === 'GET' && pathname === '/auth/google') {
     if (!GOOGLE_CLIENT_ID) { res.writeHead(302, { Location: '/login?error=google_disabled' }); res.end(); return; }
-    const gInvite   = new URL('http://x' + req.url).searchParams.get('invite') || '';
-    const gState    = crypto.randomBytes(16).toString('hex') + (gInvite ? ':' + gInvite : '');
-    const base      = getBaseUrl(req);
-    const redirect  = encodeURIComponent(base + '/auth/google/callback');
-    const scope     = encodeURIComponent('openid email profile');
-    const gUrl      = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${redirect}&response_type=code&scope=${scope}&state=${encodeURIComponent(gState)}&access_type=offline&prompt=select_account`;
+    const state    = crypto.randomBytes(16).toString('hex');
+    const base     = getBaseUrl(req);
+    const redirect = encodeURIComponent(base + '/auth/google/callback');
+    const scope    = encodeURIComponent('openid email profile');
+    const gUrl     = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${redirect}&response_type=code&scope=${scope}&state=${state}&access_type=offline&prompt=select_account`;
     res.writeHead(302, { Location: gUrl });
     res.end(); return;
   }
@@ -810,15 +809,6 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
       for (const invite of pendingInvites) {
         db.addWorkspaceMember(invite.workspace_id, user.id, 'editor', invite.invited_by);
         db.deleteInvite(invite.id);
-      }
-      // Handle direct invite link via state param
-      const gStateRaw = (parsed.query.state || '').toString();
-      const gInvWsId  = gStateRaw.includes(':') ? gStateRaw.split(':')[1] : '';
-      if (gInvWsId) {
-        const gInvWs = db.getWorkspace(gInvWsId);
-        if (gInvWs && !db.getWorkspaceMember(gInvWsId, user.id)) {
-          db.addWorkspaceMember(gInvWsId, user.id, 'editor', gInvWs.owner_id);
-        }
       }
 
       db.ensurePersonalWorkspace(user.id, login);
@@ -1341,96 +1331,21 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
   }
 
   // Accept invite: POST /api/workspaces/accept-invite/:inviteId
-  // GET /invite/:wsId → show invite page (same design as login)
+  // GET /invite/:wsId → redirect to login then auto-accept
   const invitePageMatch = pathname.match(/^\/invite\/([A-Z0-9a-z]+)$/);
   if (method === 'GET' && invitePageMatch) {
     const wsId = invitePageMatch[1];
     const ws = db.getWorkspace(wsId);
-    if (!ws) { res.writeHead(404, {'Content-Type':'text/html'}); res.end('<!DOCTYPE html><html><body style="background:#080808;color:#fff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><div style="font-size:48px;margin-bottom:16px">⚠️</div><h2>Convite inválido</h2><p style="color:#555;margin-top:8px">Este link de convite não existe ou expirou.</p><a href="/" style="display:inline-block;margin-top:24px;background:#00FF87;color:#000;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:700">Ir para o início</a></div></body></html>'); return; }
-    const wsName = ws.name.replace(' (pessoal)', '');
-    const githubEnabled = !!GITHUB_CLIENT_ID;
-    const googleEnabled = !!GOOGLE_CLIENT_ID;
-    const googleBtn = googleEnabled
-      ? `<a href="/auth/google?invite=${wsId}" class="btn-oauth btn-google"><svg viewBox="0 0 24 24" fill="none"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#fff"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#eee"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#ddd"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#ccc"/></svg>Continuar com Google</a>`
-      : '';
-    const githubBtn = githubEnabled
-      ? `<a href="/auth/github?invite=${wsId}" class="btn-oauth btn-github"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>Continuar com GitHub</a>`
-      : '';
-    const html = `<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Convite — ${wsName} · MockAPI</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Space+Mono&display=swap" rel="stylesheet"/>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{--green:#00FF87;--blue:#4dabf7}
-body{background:#030303;color:#fff;font-family:'Inter',sans-serif;min-height:100vh;display:flex;overflow:hidden}
-.bg{position:fixed;inset:0;z-index:0;overflow:hidden}
-.bg-grid{position:absolute;inset:0;background-image:linear-gradient(rgba(0,255,135,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(0,255,135,.04) 1px,transparent 1px);background-size:60px 60px;animation:gridMove 20s linear infinite}
-@keyframes gridMove{from{background-position:0 0}to{background-position:60px 60px}}
-.orb{position:absolute;border-radius:50%;filter:blur(80px);animation:orbFloat 8s ease-in-out infinite}
-.orb1{width:500px;height:500px;background:radial-gradient(circle,#00FF8718,transparent 70%);top:-150px;left:-150px}
-.orb2{width:400px;height:400px;background:radial-gradient(circle,#4dabf718,transparent 70%);bottom:-100px;right:-80px;animation-delay:-4s}
-@keyframes orbFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-20px)}}
-.page{flex:1;display:flex;align-items:center;justify-content:center;padding:24px;position:relative;z-index:1}
-.card{background:rgba(10,10,10,.95);border:1px solid #1e1e1e;border-radius:24px;padding:40px;width:100%;max-width:420px;backdrop-filter:blur(20px);box-shadow:0 40px 80px rgba(0,0,0,.8)}
-.brand{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:28px}
-.brand-icon{width:40px;height:40px;background:var(--green);border-radius:10px;display:flex;align-items:center;justify-content:center;box-shadow:0 0 24px #00FF8755}
-.brand-name{font-size:20px;font-weight:800}
-.invite-badge{display:inline-flex;align-items:center;gap:6px;background:#0d2b1e;border:1px solid #00FF8733;border-radius:20px;padding:5px 12px;font-size:11px;color:#00FF87;font-weight:600;margin-bottom:20px}
-.invite-badge svg{width:12px;height:12px}
-h2{font-size:24px;font-weight:800;margin-bottom:8px;text-align:center}
-.ws-name{color:var(--green)}
-.subtitle{font-size:14px;color:#555;text-align:center;margin-bottom:28px;line-height:1.6}
-.divider{display:flex;align-items:center;gap:10px;margin:16px 0;color:#2a2a2a;font-size:11px;font-family:'Space Mono',monospace}
-.divider::before,.divider::after{content:'';flex:1;border-top:1px solid #1a1a1a}
-.btn-oauth{display:flex;align-items:center;justify-content:center;gap:10px;border:none;border-radius:12px;padding:14px 24px;font-size:14px;font-weight:600;cursor:pointer;text-decoration:none;transition:all .2s;width:100%;margin-bottom:10px;font-family:'Inter',sans-serif}
-.btn-google{background:#fff;color:#111}
-.btn-google:hover{background:#f5f5f5;transform:translateY(-2px);box-shadow:0 8px 24px rgba(255,255,255,.15)}
-.btn-github{background:#161616;color:#fff;border:1px solid #2a2a2a}
-.btn-github:hover{background:#1e1e1e;border-color:#3a3a3a;transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.4)}
-.btn-oauth svg{width:20px;height:20px;flex-shrink:0}
-.footer-note{font-size:11px;color:#333;text-align:center;margin-top:16px;line-height:1.6}
-.footer-note a{color:#555;text-decoration:none}
-.footer-note a:hover{color:#888}
-</style>
-</head>
-<body>
-<div class="bg">
-  <div class="bg-grid"></div>
-  <div class="orb orb1"></div>
-  <div class="orb orb2"></div>
-</div>
-<div class="page">
-  <div class="card">
-    <div class="brand">
-      <div class="brand-icon">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-      </div>
-      <span class="brand-name">MockAPI</span>
-    </div>
-
-    <div style="text-align:center">
-      <div class="invite-badge">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        Você foi convidado
-      </div>
-    </div>
-
-    <h2>Junte-se ao workspace<br/><span class="ws-name">${wsName}</span></h2>
-    <p class="subtitle">Entre com sua conta para aceitar o convite<br/>e começar a colaborar na equipe.</p>
-
-    ${googleBtn}
-    ${githubBtn}
-
-    <p class="footer-note">
-      Ao entrar, você aceita automaticamente o convite.<br/>
-      <a href="/">Ir para o início sem aceitar</a>
-    </p>
-  </div>
-</div>
-</body></html>`;
+    if (!ws) { res.writeHead(404, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Not found'})); return; }
+    // Store invite workspace in cookie so after login we can auto-add
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Convite MockAPI</title>
+<style>body{background:#080808;color:#fff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+.card{background:#111;border:1px solid #2a2a2a;border-radius:14px;padding:40px;text-align:center;max-width:400px}
+.logo{font-size:22px;font-weight:800;color:#00FF87;margin-bottom:8px}h2{margin:0 0 8px;font-size:18px}
+p{color:#888;font-size:14px;margin:0 0 24px}a{background:#00FF87;color:#000;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px}</style></head>
+<body><div class="card"><div class="logo">⚡ MockAPI</div>
+<h2>Você foi convidado</h2><p>Para o workspace <strong style="color:#fff">${ws.name.replace(' (pessoal)','')}</strong><br/>Faça login para aceitar o convite.</p>
+<a href="/auth/github?invite=${wsId}">Entrar com GitHub</a></div></body></html>`;
     res.writeHead(200, {'Content-Type':'text/html'}); res.end(html); return;
   }
 
