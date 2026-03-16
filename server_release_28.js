@@ -639,11 +639,8 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
   // ── AUTH: GitHub OAuth start
   if (method === 'GET' && pathname === '/auth/github') {
     if (!AUTH_ENABLED) { res.writeHead(302, { Location: '/' }); res.end(); return; }
-    const reqUrl = new URL('http://x' + req.url);
-    const inviteWs = reqUrl.searchParams.get('invite') || '';
-    const stateToken = crypto.randomBytes(16).toString('hex');
-    const stateVal = inviteWs ? stateToken + ':' + inviteWs : stateToken;
-    const ghUrl = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&scope=read:user,user:email&state=${encodeURIComponent(stateVal)}`;
+    const state = crypto.randomBytes(16).toString('hex');
+    const ghUrl = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&scope=read:user,user:email&state=${state}`;
     res.writeHead(302, { Location: ghUrl });
     res.end(); return;
   }
@@ -702,16 +699,6 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
         db.addWorkspaceMember(invite.workspace_id, user.id, 'editor', invite.invited_by);
         db.deleteInvite(invite.id);
         console.log('[workspace] auto-accepted invite for', user.login, '→', invite.workspace_id);
-      }
-      // Also handle direct invite link (wsId embedded in OAuth state)
-      const stateParam = params.get('state') || '';
-      const inviteWsId = stateParam.includes(':') ? stateParam.split(':')[1] : '';
-      if (inviteWsId) {
-        const invWs = db.getWorkspace(inviteWsId);
-        if (invWs && !db.getWorkspaceMember(inviteWsId, user.id)) {
-          db.addWorkspaceMember(inviteWsId, user.id, 'editor', invWs.owner_id);
-          console.log('[workspace] invite-link join:', user.login, '→', inviteWsId);
-        }
       }
 
       // Ensure personal workspace exists
@@ -981,7 +968,7 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
       ep.crudPath = crudPath;
       ep.tableKey = tableKey;
     }
-    broadcast(workspaceId, 'endpoint_created', ep);
+    broadcast(null, 'endpoint_created', ep);
     return json(res, ep, 201);
   }
   // Update endpoint (PATCH)
@@ -1317,24 +1304,6 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
   }
 
   // Accept invite: POST /api/workspaces/accept-invite/:inviteId
-  // GET /invite/:wsId → redirect to login then auto-accept
-  const invitePageMatch = pathname.match(/^\/invite\/([A-Z0-9a-z]+)$/);
-  if (method === 'GET' && invitePageMatch) {
-    const wsId = invitePageMatch[1];
-    const ws = db.getWorkspace(wsId);
-    if (!ws) { res.writeHead(404, {'Content-Type':'application/json'}); res.end(JSON.stringify({error:'Not found'})); return; }
-    // Store invite workspace in cookie so after login we can auto-add
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Convite MockAPI</title>
-<style>body{background:#080808;color:#fff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
-.card{background:#111;border:1px solid #2a2a2a;border-radius:14px;padding:40px;text-align:center;max-width:400px}
-.logo{font-size:22px;font-weight:800;color:#00FF87;margin-bottom:8px}h2{margin:0 0 8px;font-size:18px}
-p{color:#888;font-size:14px;margin:0 0 24px}a{background:#00FF87;color:#000;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px}</style></head>
-<body><div class="card"><div class="logo">⚡ MockAPI</div>
-<h2>Você foi convidado</h2><p>Para o workspace <strong style="color:#fff">${ws.name.replace(' (pessoal)','')}</strong><br/>Faça login para aceitar o convite.</p>
-<a href="/auth/github?invite=${wsId}">Entrar com GitHub</a></div></body></html>`;
-    res.writeHead(200, {'Content-Type':'text/html'}); res.end(html); return;
-  }
-
   const acceptInviteMatch = pathname.match(/^\/api\/workspaces\/accept-invite\/([A-Z0-9]+)$/);
   if (method === 'POST' && acceptInviteMatch) {
     const user = requireAuth(req, res); if (!user) return;
@@ -3517,7 +3486,7 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 .ep-meta{display:flex;justify-content:space-between;align-items:center;margin-top:3px;gap:4px;min-width:0}
 .ep-id{font-size:9px;color:var(--text3);font-family:'Space Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
 .ep-count{font-size:10px;color:var(--text3);font-family:'Space Mono',monospace;white-space:nowrap;flex-shrink:0}
-.ep-del{background:none;border:none;color:var(--text4);padding:2px 4px;opacity:0;transition:all .2s;font-size:16px;line-height:1}
+.ep-del{background:none;border:none;color:var(--text4);padding:2px 4px;opacity:0;transition:all .2s}
 .ep-item:hover .ep-del{opacity:1}
 .ep-del:hover{color:var(--red)!important}
 .sidebar-footer{padding:10px 12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px}
@@ -3775,6 +3744,9 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
 
     <div class="ep-section-label" id="ep-label">ENDPOINTS (0)</div>
     <div class="ep-list" id="ep-list">
+      <div class="empty-state" style="padding:24px 16px">
+        <div style="font-size:13px;color:#333">Nenhum endpoint ainda</div>
+      </div>
     </div>
 
     <div class="sidebar-footer">
@@ -4150,7 +4122,7 @@ input,select,textarea{font-family:'Space Mono',monospace;font-size:13px}
                 <option value="editor">Editor</option>
                 <option value="viewer">Viewer</option>
               </select>
-              <button id="ws-invite-btn" class="btn-primary" style="width:100px;padding:0;flex-shrink:0">Convidar</button>
+              <button id="ws-invite-btn" class="btn-primary" style="width:auto;padding:0 18px;flex-shrink:0">Convidar</button>
             </div>
             <div style="font-size:11px;color:var(--text4)">
               <strong style="color:var(--text3)">Editor</strong> — cria e edita endpoints &nbsp;·&nbsp;
@@ -4537,13 +4509,6 @@ function handleWsEvent(msg) {
       if (!state.requests[endpointId]) state.requests[endpointId] = [];
       state.requests[endpointId].unshift(payload);
       if (state.requests[endpointId].length > 200) state.requests[endpointId].pop();
-      // Update sidebar request count
-      if (state.endpoints[endpointId] !== undefined) {
-        state.endpoints[endpointId].requestCount = (state.endpoints[endpointId].requestCount || 0) + 1;
-        const epEl = document.querySelector('[data-ep-id="' + endpointId + '"]');
-        const cntEl = epEl && epEl.querySelector('.ep-count');
-        if (cntEl) cntEl.textContent = state.endpoints[endpointId].requestCount + ' req';
-      }
       if (state.selectedEp === endpointId) {
         prependRequestRow(payload, true);
         updateHeaderStats();
@@ -4630,7 +4595,6 @@ async function createEndpoint() {
         path: document.getElementById('ep-path-input').value.trim(),
         corsEnabled: state.corsOn,
         rateLimit: parseInt(document.getElementById('ep-ratelimit-input').value) || 100,
-        workspaceId: wsState.currentWsId || null,
       })
     });
     if (res.status === 403) {
