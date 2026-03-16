@@ -322,25 +322,11 @@ function wsParse(buf) {
   return buf.slice(offset, offset + len).toString('utf8');
 }
 
-function broadcast(workspaceOrEpId, event, payload) {
-  const msg = JSON.stringify({ endpointId: workspaceOrEpId, event, payload });
+function broadcast(endpointId, event, payload) {
+  const msg = JSON.stringify({ endpointId, event, payload });
   const frame = wsFrame(msg);
-  // Resolve workspace membership for filtering
-  let allowedUsers = null;
-  if (workspaceOrEpId && ['endpoint_created','endpoint_deleted','endpoint_updated'].includes(event)) {
-    // workspaceOrEpId is a workspaceId for these events
-    try {
-      const members = db.getWorkspaceMembers(workspaceOrEpId);
-      allowedUsers = new Set(members.map(m => m.id));
-    } catch(_) {}
-  }
   for (const client of wsClients) {
-    try {
-      if (!client.writable) { wsClients.delete(client); continue; }
-      // If we have an allowedUsers set, only send to members
-      if (allowedUsers && client._userId && !allowedUsers.has(client._userId)) continue;
-      client.write(frame);
-    }
+    try { if (client.writable) client.write(frame); }
     catch(_) { wsClients.delete(client); }
   }
 }
@@ -718,7 +704,7 @@ h1{font-size:36px;font-weight:700;color:#fff;margin-bottom:12px}
         console.log('[workspace] auto-accepted invite for', user.login, '→', invite.workspace_id);
       }
       // Also handle direct invite link (wsId embedded in OAuth state)
-      const stateParam = (parsed.query.state || '').toString();
+      const stateParam = params.get('state') || '';
       const inviteWsId = stateParam.includes(':') ? stateParam.split(':')[1] : '';
       if (inviteWsId) {
         const invWs = db.getWorkspace(inviteWsId);
@@ -1569,14 +1555,6 @@ server.on('upgrade', (req, socket, head) => {
   if (req.url === '/ws') {
     wsHandshake(req, socket);
     const clientId = genId();
-
-    // Attach user identity to socket from session cookie
-    const cookieHeader = req.headers.cookie || '';
-    const sessionMatch = cookieHeader.match(/mockapi_session=([a-f0-9]+)/);
-    const sessionToken = sessionMatch ? sessionMatch[1] : null;
-    const sessionUser  = sessionToken ? db.getSession(sessionToken) : null;
-    socket._userId = sessionUser ? sessionUser.id : null;
-
     wsClients.add(socket);
 
     const crudTables = db.getAllCrudTables();
@@ -1605,110 +1583,58 @@ server.listen(PORT, () => {
 function getLoginHTML(baseUrl) {
   const githubEnabled = !!GITHUB_CLIENT_ID;
   const googleEnabled = !!GOOGLE_CLIENT_ID;
-  const googleBtn = googleEnabled
-    ? `<a href="/auth/google" class="btn-oauth btn-google"><svg viewBox="0 0 24 24" fill="none"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#fff"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#eee"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#ddd"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#ccc"/></svg>Entrar com Google</a>`
-    : '';
-  const githubBtn = githubEnabled
-    ? `<a href="/auth/github" class="btn-oauth btn-github"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>Entrar com GitHub</a>`
-    : '';
+  const googleBtn = googleEnabled ? '<a href="/auth/google" class="btn-oauth btn-google"><svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#fff" fill-opacity=".9"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#fff" fill-opacity=".8"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#fff" fill-opacity=".7"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#fff" fill-opacity=".6"/></svg>Entrar com Google</a>' : '';
+  const githubBtn = githubEnabled ? '<a href="/auth/github" class="btn-oauth btn-github"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>Entrar com GitHub</a>' : '';
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>MockAPI Inspector</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Space+Mono&display=swap" rel="stylesheet"/>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Login — MockAPI Inspector</title>
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{--green:#00FF87;--blue:#4dabf7;--purple:#c084fc}
-body{background:#030303;color:#fff;font-family:'Inter',sans-serif;min-height:100vh;display:flex;overflow:hidden}
-.bg{position:fixed;inset:0;z-index:0;overflow:hidden}
-.bg-grid{position:absolute;inset:0;background-image:linear-gradient(rgba(0,255,135,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(0,255,135,.04) 1px,transparent 1px);background-size:60px 60px;animation:gridMove 20s linear infinite}
-@keyframes gridMove{from{background-position:0 0}to{background-position:60px 60px}}
-.orb{position:absolute;border-radius:50%;filter:blur(80px);animation:orbFloat 8s ease-in-out infinite}
-.orb1{width:600px;height:600px;background:radial-gradient(circle,#00FF8718,transparent 70%);top:-200px;left:-200px}
-.orb2{width:500px;height:500px;background:radial-gradient(circle,#4dabf718,transparent 70%);bottom:-150px;right:-100px;animation-delay:-4s}
-.orb3{width:300px;height:300px;background:radial-gradient(circle,#c084fc12,transparent 70%);top:40%;left:40%;animation-delay:-2s}
-@keyframes orbFloat{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-30px) scale(1.05)}}
-.code-float{position:absolute;font-family:'Space Mono',monospace;font-size:11px;opacity:.12;white-space:nowrap;animation:codeFloat 12s linear infinite}
-@keyframes codeFloat{from{transform:translateY(100vh)}to{transform:translateY(-100px)}}
-.left{flex:1;display:flex;flex-direction:column;justify-content:center;padding:80px 60px;position:relative;z-index:1}
-.brand{display:flex;align-items:center;gap:14px;margin-bottom:48px}
-.brand-icon{width:52px;height:52px;background:var(--green);border-radius:14px;display:flex;align-items:center;justify-content:center;box-shadow:0 0 40px #00FF8766;flex-shrink:0}
-.brand-name{font-size:26px;font-weight:800;letter-spacing:-.5px}
-.brand-sub{font-size:12px;color:#444;font-family:'Space Mono',monospace;letter-spacing:.1em;text-transform:uppercase;margin-top:2px}
-h1{font-size:52px;font-weight:800;line-height:1.1;letter-spacing:-1px;margin-bottom:20px}
-h1 .accent{background:linear-gradient(135deg,var(--green),var(--blue));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.tagline{font-size:18px;color:#555;line-height:1.7;max-width:480px;margin-bottom:48px}
-.stats{display:flex;gap:40px;margin-bottom:48px}
-.stat-item{text-align:center}
-.stat-num{font-size:28px;font-weight:800;color:var(--green);font-family:'Space Mono',monospace}
-.stat-lbl{font-size:12px;color:#444;margin-top:2px}
-.pills{display:flex;flex-wrap:wrap;gap:8px}
-.pill{background:#0d0d0d;border:1px solid #1e1e1e;border-radius:20px;padding:7px 14px;font-size:12px;color:#888;display:flex;align-items:center;gap:6px;transition:all .2s}
-.pill:hover{border-color:#00FF8733;color:#00FF87}
-.pill .dot{width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0}
-.right{width:460px;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:40px;position:relative;z-index:1}
-.card{background:rgba(10,10,10,.95);border:1px solid #1e1e1e;border-radius:24px;padding:40px;width:100%;backdrop-filter:blur(20px);box-shadow:0 40px 80px rgba(0,0,0,.8)}
-.card-title{font-size:22px;font-weight:800;margin-bottom:6px;text-align:center}
-.card-sub{font-size:14px;color:#555;text-align:center;margin-bottom:32px;line-height:1.5}
-.btn-oauth{display:flex;align-items:center;justify-content:center;gap:10px;border:none;border-radius:12px;padding:14px 24px;font-size:14px;font-weight:600;cursor:pointer;text-decoration:none;transition:all .2s;width:100%;margin-bottom:12px;font-family:'Inter',sans-serif}
-.btn-google{background:#fff;color:#111}
-.btn-google:hover{background:#f5f5f5;transform:translateY(-2px);box-shadow:0 8px 24px rgba(255,255,255,.15)}
-.btn-github{background:#161616;color:#fff;border:1px solid #2a2a2a}
-.btn-github:hover{background:#1e1e1e;border-color:#3a3a3a;transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.4)}
-.btn-oauth svg{width:20px;height:20px;flex-shrink:0}
-.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 1.5s infinite;vertical-align:middle;margin-right:6px}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.error-box{background:#FF444415;border:1px solid #FF444433;border-radius:8px;padding:10px 14px;font-size:13px;color:#FF6B6B;margin-bottom:20px;display:none;text-align:center}
-@media(max-width:900px){.left{display:none}.right{width:100%;padding:24px}}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#0a0a0a;color:#fff;font-family:'Inter',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}
+  .card{background:#111;border:1px solid #1a1a1a;border-radius:16px;padding:48px 40px;width:100%;max-width:400px;text-align:center}
+  .logo{font-size:32px;margin-bottom:8px}
+  h1{font-size:22px;font-weight:700;margin-bottom:6px}
+  .sub{color:#666;font-size:14px;margin-bottom:32px;line-height:1.5}
+  .btn-oauth{display:flex;align-items:center;justify-content:center;gap:10px;border:none;border-radius:8px;padding:13px 24px;font-size:14px;font-weight:600;cursor:pointer;text-decoration:none;transition:all .2s;width:100%;margin-bottom:10px}
+  .btn-github{background:#fff;color:#000}
+  .btn-github:hover{background:#f0f0f0;transform:translateY(-1px)}
+  .btn-google{background:#4285F4;color:#fff}
+  .btn-google:hover{background:#3367d6;transform:translateY(-1px)}
+  .btn-oauth svg,.btn-oauth img{width:20px;height:20px;flex-shrink:0}
+  .divider{display:flex;align-items:center;gap:12px;margin:20px 0;color:#333;font-size:12px}
+  .divider::before,.divider::after{content:'';flex:1;border-top:1px solid #1a1a1a}
+  .features{display:grid;gap:10px;margin-top:24px;text-align:left}
+  .feature{display:flex;gap:10px;align-items:flex-start;font-size:13px;color:#555}
+  .feature .icon{color:#00FF87;font-size:16px;flex-shrink:0}
+  .footer{font-size:12px;color:#333;margin-top:24px}
+  .error-box{background:#FF444422;border:1px solid #FF444444;border-radius:8px;padding:10px 14px;font-size:13px;color:#FF6B6B;margin-bottom:20px;display:none}
 </style>
 </head>
 <body>
-<div class="bg">
-  <div class="bg-grid"></div>
-  <div class="orb orb1"></div><div class="orb orb2"></div><div class="orb orb3"></div>
-  <div class="code-float" style="left:5%;animation-duration:14s;color:#00FF87">GET /mock/A3F2/users → 200 OK</div>
-  <div class="code-float" style="left:18%;animation-duration:18s;animation-delay:-5s;color:#4dabf7">POST /mock/B1C9/orders → 201 Created</div>
-  <div class="code-float" style="left:55%;animation-duration:11s;animation-delay:-3s;color:#c084fc">DELETE /mock/D4E7/items/42 → 200 OK</div>
-  <div class="code-float" style="left:72%;animation-duration:16s;animation-delay:-8s;color:#00FF87">PATCH /mock/F9A1/users/7 → 200 OK</div>
+<div class="card">
+  <div class="logo">⚡</div>
+  <h1>MockAPI Inspector</h1>
+  <p class="sub">Mock server com CRUD real, Faker integrado e import OpenAPI.</p>
+  <div class="error-box" id="err-box">Erro ao autenticar. Tente novamente.</div>
+  ${googleBtn}
+  ${githubBtn}
+  <div class="features">
+    <div class="feature"><span class="icon">✦</span><span>CRUD com estado real — GET, POST, PUT, DELETE automáticos</span></div>
+    <div class="feature"><span class="icon">✦</span><span>Faker integrado — seed de dados realistas em 1 clique</span></div>
+    <div class="feature"><span class="icon">✦</span><span>Import OpenAPI/Swagger — gera mocks do seu spec automaticamente</span></div>
+    <div class="feature"><span class="icon">✦</span><span>Histórico de requisições em tempo real</span></div>
+  </div>
+  <p class="footer">Ao entrar, você concorda com os termos de uso.</p>
 </div>
-<div class="left">
-  <div class="brand">
-    <div class="brand-icon">
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-    </div>
-    <div><div class="brand-name">MockAPI</div><div class="brand-sub">HTTP Inspector</div></div>
-  </div>
-  <h1>Mock APIs.<br/><span class="accent">Ship faster.</span></h1>
-  <p class="tagline">Crie endpoints HTTP em segundos. CRUD real com persistência, Faker integrado e import OpenAPI/Swagger.</p>
-  <div class="stats">
-    <div class="stat-item"><div class="stat-num">∞</div><div class="stat-lbl">Endpoints</div></div>
-    <div class="stat-item"><div class="stat-num">&lt;1ms</div><div class="stat-lbl">Latência</div></div>
-    <div class="stat-item"><div class="stat-num">100%</div><div class="stat-lbl">Real-time</div></div>
-  </div>
-  <div class="pills">
-    <div class="pill"><span class="dot"></span>CRUD automático</div>
-    <div class="pill"><span class="dot"></span>Faker data</div>
-    <div class="pill"><span class="dot"></span>Mock Rules</div>
-    <div class="pill"><span class="dot"></span>WebSocket live</div>
-    <div class="pill"><span class="dot"></span>OpenAPI import</div>
-    <div class="pill"><span class="dot"></span>Team workspaces</div>
-  </div>
-</div>
-<div class="right">
-  <div class="card">
-    <div class="card-title"><span class="live-dot"></span>Comece agora</div>
-    <p class="card-sub">Sem cartão de crédito. Sem configuração.<br/>Pronto em 30 segundos.</p>
-    <div class="error-box" id="err-box">Erro ao autenticar. Tente novamente.</div>
-    ${googleBtn}
-    ${githubBtn}
-    <div style="font-size:11px;color:#333;text-align:center;margin-top:16px">Ao entrar, você concorda com os termos de uso.</div>
-  </div>
-</div>
-<script>const p=new URLSearchParams(location.search);if(p.get('error')){document.getElementById('err-box').style.display='block';}</script>
+<script>
+  const p = new URLSearchParams(location.search);
+  if (p.get('error')) { document.getElementById('err-box').style.display='block'; }
+</script>
 </body></html>`;
 }
-
 
 // ── ADMIN PANEL ───────────────────────────────────────────────────────────────
 function getAdminHTML(baseUrl, adminUser) {
@@ -4578,8 +4504,6 @@ function handleWsEvent(msg) {
       }
       break;
     case 'endpoint_created':
-      // Only add endpoint if it belongs to the current active workspace
-      if (payload.workspaceId && wsState.currentWsId && payload.workspaceId !== wsState.currentWsId) break;
       state.endpoints[payload.id] = payload;
       state.requests[payload.id] = [];
       state.rules[payload.id] = [];
@@ -5427,12 +5351,9 @@ function updateHeader() {
 
 function updateHeaderStats() {
   const reqs = state.requests[state.selectedEp] || [];
-  const ep = state.endpoints[state.selectedEp];
   const errors = reqs.filter(r => r.status >= 400).length;
   const avgLatency = reqs.length ? Math.round(reqs.reduce((a, r) => a + (r.latency||0), 0) / reqs.length) : 0;
-  // Use real requestCount from endpoint (not capped array length)
-  const totalCount = ep ? (ep.requestCount || reqs.length) : reqs.length;
-  document.getElementById('stat-total').textContent = totalCount;
+  document.getElementById('stat-total').textContent = reqs.length;
   const errEl = document.getElementById('stat-errors');
   errEl.textContent = errors;
   errEl.style.color = errors > 0 ? '#FF6B6B' : '#555';
